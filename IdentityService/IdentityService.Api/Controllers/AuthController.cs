@@ -1,8 +1,11 @@
 ﻿using IdentityService.Application.Commands.LoginUser;
 using IdentityService.Application.Commands.RegisterUser;
+using IdentityService.Application.Queries.GetCurrentUser;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace IdentityService.Api.Controllers
 {
@@ -27,6 +30,22 @@ namespace IdentityService.Api.Controllers
         public async Task<IActionResult> Login([FromBody] LoginUserCommand command)
         {
             var result = await _mediator.Send(command);
+            return Ok(result);
+        }
+
+        [Authorize]
+        [HttpGet("me")]
+        public async Task<IActionResult> GetCurrentUser()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? User.FindFirst("sub")?.Value;
+
+            if (userIdClaim is null || !Guid.TryParse(userIdClaim, out var userId))
+            {
+                return Unauthorized();
+            }
+
+            var result = await _mediator.Send(new GetCurrentUserQuery { UserId = userId });
             return Ok(result);
         }
     }
