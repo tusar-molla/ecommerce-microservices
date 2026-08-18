@@ -1,9 +1,10 @@
-﻿using IdentityService.Application.Interfaces;
+﻿using IdentityService.Application.DTOs;
+using IdentityService.Application.Interfaces;
 using IdentityService.Infrastructure.Auth;
 using IdentityService.Infrastructure.Persistence;
 using IdentityService.Infrastructure.Repositories;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -19,6 +20,7 @@ namespace IdentityService.Infrastructure
 
             services.AddSingleton<IDbConnectionFactory>(new SqlConnectionFactory(connectionString));
             services.AddScoped<IUserRepository, UserRepository>();
+            services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 
             var jwtSecretKey = configuration["Jwt:SecretKey"]
                 ?? throw new InvalidOperationException("Jwt:SecretKey is missing.");

@@ -1,4 +1,6 @@
-﻿using IdentityService.Application.Interfaces;
+﻿using IdentityService.Application.DTOs;
+using IdentityService.Application.Interfaces;
+using IdentityService.Application.Models;
 using MediatR;
 using System;
 using System.Collections.Generic;
@@ -10,11 +12,13 @@ namespace IdentityService.Application.Commands.LoginUser
     {
         private readonly IUserRepository _userRepository;
         private readonly ITokenService _tokenService;
+        private readonly IRefreshTokenRepository _refreshTokenRepository;
 
-        public LoginUserCommandHandler(IUserRepository userRepository, ITokenService tokenService)
+        public LoginUserCommandHandler(IUserRepository userRepository, ITokenService tokenService, IRefreshTokenRepository refreshTokenRepository)
         {
             _userRepository = userRepository;
             _tokenService = tokenService;
+            _refreshTokenRepository = refreshTokenRepository;
         }
 
         public async Task<LoginResult> Handle(LoginUserCommand request, CancellationToken cancellationToken)
@@ -32,12 +36,20 @@ namespace IdentityService.Application.Commands.LoginUser
             }
 
             var accessToken = _tokenService.GenerateAccessToken(user);
-            var refreshToken = _tokenService.GenerateRefreshToken();
+            var refreshTokenValue = _tokenService.GenerateRefreshToken();
 
+            var refreshToken = new IdentityService.Application.Models.RefreshToken
+            {
+                Id = Guid.NewGuid(),
+                UserId = user.Id,
+                Token = refreshTokenValue,
+                ExpiresAt = DateTime.UtcNow.AddDays(7)
+            };
+            await _refreshTokenRepository.CreateAsync(refreshToken);
             return new LoginResult
             {
                 AccessToken = accessToken,
-                RefreshToken = refreshToken
+                RefreshToken = refreshTokenValue
             };
         }
     }

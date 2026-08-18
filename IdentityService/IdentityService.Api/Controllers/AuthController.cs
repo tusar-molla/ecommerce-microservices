@@ -1,5 +1,8 @@
 ﻿using IdentityService.Application.Commands.LoginUser;
+using IdentityService.Application.Commands.Logout;
+using IdentityService.Application.Commands.RefreshToken;
 using IdentityService.Application.Commands.RegisterUser;
+using IdentityService.Application.DTOs;
 using IdentityService.Application.Queries.GetCurrentUser;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
@@ -14,9 +17,11 @@ namespace IdentityService.Api.Controllers
     public class AuthController : ControllerBase
     {
         private readonly IMediator _mediator;
-        public AuthController(IMediator mediator)
+        private readonly IRefreshTokenRepository _refreshTokenRepository;
+        public AuthController(IMediator mediator, IRefreshTokenRepository refreshTokenRepository)
         {
             _mediator = mediator;
+            _refreshTokenRepository = refreshTokenRepository;
         }
 
         [HttpPost("register")]
@@ -47,6 +52,21 @@ namespace IdentityService.Api.Controllers
 
             var result = await _mediator.Send(new GetCurrentUserQuery { UserId = userId });
             return Ok(result);
+        }
+
+        [HttpPost("refresh")]
+        public async Task<IActionResult> Refresh([FromBody] RefreshTokenCommand command)
+        {
+            var result = await _mediator.Send(command);
+            return Ok(result);
+        }
+
+        [Authorize]
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout([FromBody] LogoutCommand command)
+        {
+            await _mediator.Send(command);
+            return Ok(new { Message = "Logged out successfully." });
         }
     }
 }
