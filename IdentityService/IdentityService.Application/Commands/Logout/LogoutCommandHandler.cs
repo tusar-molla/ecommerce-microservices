@@ -1,4 +1,5 @@
 ﻿using IdentityService.Application.DTOs;
+using IdentityService.Application.Interfaces;
 using MediatR;
 using System;
 using System.Collections.Generic;
@@ -9,10 +10,12 @@ namespace IdentityService.Application.Commands.Logout
     public class LogoutCommandHandler : IRequestHandler<LogoutCommand, Unit>
     {
         private readonly IRefreshTokenRepository _refreshTokenRepository;
+        private readonly ITokenBlocklistService _tokenBlocklistService;
 
-        public LogoutCommandHandler(IRefreshTokenRepository refreshTokenRepository)
+        public LogoutCommandHandler(IRefreshTokenRepository refreshTokenRepository, ITokenBlocklistService tokenBlocklistService)
         {
             _refreshTokenRepository = refreshTokenRepository;
+            _tokenBlocklistService = tokenBlocklistService;
         }
 
         public async Task<Unit> Handle(LogoutCommand request, CancellationToken cancellationToken)
@@ -21,6 +24,11 @@ namespace IdentityService.Application.Commands.Logout
             if (token is not null)
             {
                 await _refreshTokenRepository.RevokeAsync(token.Id);
+            }
+
+            if (!string.IsNullOrEmpty(request.Jti))
+            {
+                await _tokenBlocklistService.RevokeAsync(request.Jti, request.AccessTokenExpiresAt);
             }
 
             return Unit.Value;

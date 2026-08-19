@@ -21,6 +21,7 @@ namespace IdentityService.Infrastructure
             services.AddSingleton<IDbConnectionFactory>(new SqlConnectionFactory(connectionString));
             services.AddScoped<IUserRepository, UserRepository>();
             services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+            services.AddScoped<ITokenBlocklistService, SqlTokenBlocklistService>();
 
             var jwtSecretKey = configuration["Jwt:SecretKey"]
                 ?? throw new InvalidOperationException("Jwt:SecretKey is missing.");

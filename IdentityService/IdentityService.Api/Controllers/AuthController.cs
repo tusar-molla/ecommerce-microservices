@@ -8,6 +8,7 @@ using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 
 namespace IdentityService.Api.Controllers
@@ -63,10 +64,29 @@ namespace IdentityService.Api.Controllers
 
         [Authorize]
         [HttpPost("logout")]
-        public async Task<IActionResult> Logout([FromBody] LogoutCommand command)
+        public async Task<IActionResult> Logout([FromBody] LogoutRequestBody body)
         {
-            await _mediator.Send(command);
+            var jti = User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value ?? string.Empty;
+            var expClaim = User.FindFirst(JwtRegisteredClaimNames.Exp)?.Value;
+
+            var expiresAt = expClaim is not null
+                ? DateTimeOffset.FromUnixTimeSeconds(long.Parse(expClaim)).UtcDateTime
+                : DateTime.UtcNow;
+
+            var logoutCommand = new LogoutCommand
+            {
+                RefreshToken = body.RefreshToken,
+                Jti = jti,
+                AccessTokenExpiresAt = expiresAt
+            };
+
+            await _mediator.Send(logoutCommand);
             return Ok(new { Message = "Logged out successfully." });
+        }
+
+        public class LogoutRequestBody
+        {
+            public string RefreshToken { get; set; } = string.Empty;
         }
     }
 }

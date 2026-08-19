@@ -62,6 +62,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseAuthentication();
+app.UseMiddleware<IdentityService.Api.Middleware.TokenBlocklistMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
