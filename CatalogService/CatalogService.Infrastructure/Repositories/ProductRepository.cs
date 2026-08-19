@@ -40,17 +40,35 @@ namespace CatalogService.Infrastructure.Repositories
             return await connection.QuerySingleOrDefaultAsync<Product>(sql, new { Id = id });
         }
 
-        public async Task<IEnumerable<Product>> GetAllAsync()
+        public async Task<(IEnumerable<Product> Items, int TotalCount)> GetPagedAsync(int pageNumber, int pageSize, Guid? categoryId)
         {
             using var connection = _connectionFactory.CreateConnection();
 
-            const string sql = @"
-            SELECT Id, Name, Description, Price, Sku, CategoryId, ImageUrl, IsActive, CreatedAt, UpdatedAt
-            FROM Products
-            WHERE IsActive = 1
-            ORDER BY CreatedAt DESC";
+            var offset = (pageNumber - 1) * pageSize;
 
-            return await connection.QueryAsync<Product>(sql);
+            const string countSql = @"
+        SELECT COUNT(1) FROM Products
+        WHERE IsActive = 1
+          AND (@CategoryId IS NULL OR CategoryId = @CategoryId)";
+
+            const string itemsSql = @"
+        SELECT Id, Name, Description, Price, Sku, CategoryId, ImageUrl, IsActive, CreatedAt, UpdatedAt
+        FROM Products
+        WHERE IsActive = 1
+          AND (@CategoryId IS NULL OR CategoryId = @CategoryId)
+        ORDER BY CreatedAt DESC
+        OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
+
+            var totalCount = await connection.ExecuteScalarAsync<int>(countSql, new { CategoryId = categoryId });
+
+            var items = await connection.QueryAsync<Product>(itemsSql, new
+            {
+                CategoryId = categoryId,
+                Offset = offset,
+                PageSize = pageSize
+            });
+
+            return (items, totalCount);
         }
 
         public async Task<bool> SkuExistsAsync(string sku)

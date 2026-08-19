@@ -63,10 +63,17 @@ namespace CatalogService.Api.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll([FromQuery] int pageNumber = 1,[FromQuery] int pageSize = 20,[FromQuery] Guid? categoryId = null)
         {
-            var products = await _mediator.Send(new GetAllProductsQuery());
-            return Ok(products);
+            var query = new GetAllProductsQuery
+            {
+                PageNumber = pageNumber,
+                PageSize = pageSize,
+                CategoryId = categoryId
+            };
+
+            var result = await _mediator.Send(query);
+            return Ok(result);
         }
     }
 }

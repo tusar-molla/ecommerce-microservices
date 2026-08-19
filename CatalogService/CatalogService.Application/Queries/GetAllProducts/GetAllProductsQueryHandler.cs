@@ -7,7 +7,7 @@ using System.Text;
 
 namespace CatalogService.Application.Queries.GetAllProducts
 {
-    public class GetAllProductsQueryHandler : IRequestHandler<GetAllProductsQuery, IEnumerable<ProductDto>>
+    public class GetAllProductsQueryHandler : IRequestHandler<GetAllProductsQuery, PagedResult<ProductDto>>
     {
         private readonly IProductRepository _productRepository;
 
@@ -16,11 +16,12 @@ namespace CatalogService.Application.Queries.GetAllProducts
             _productRepository = productRepository;
         }
 
-        public async Task<IEnumerable<ProductDto>> Handle(GetAllProductsQuery request, CancellationToken cancellationToken)
+        public async Task<PagedResult<ProductDto>> Handle(GetAllProductsQuery request, CancellationToken cancellationToken)
         {
-            var products = await _productRepository.GetAllAsync();
+            var (items, totalCount) = await _productRepository.GetPagedAsync(request.PageNumber,request.PageSize,request.CategoryId);
 
-            return products.Select(p => new ProductDto
+
+            var dtos = items.Select(p => new ProductDto
             {
                 Id = p.Id,
                 Name = p.Name,
@@ -30,6 +31,14 @@ namespace CatalogService.Application.Queries.GetAllProducts
                 CategoryId = p.CategoryId,
                 ImageUrl = p.ImageUrl
             });
+
+            return new PagedResult<ProductDto>
+            {
+                Items = dtos,
+                PageNumber = request.PageNumber,
+                PageSize = request.PageSize,
+                TotalCount = totalCount
+            };
         }
     }
 }
