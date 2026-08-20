@@ -18,6 +18,13 @@ namespace CatalogService.Application.Queries.GetProductById
         public decimal Price { get; set; }
         public string Sku { get; set; } = string.Empty;
         public Guid CategoryId { get; set; }
-        public string ImageUrl { get; set; } = string.Empty;
+        public List<ProductImageDto> Images { get; set; } = new();
+    }
+
+    public class ProductImageDto
+    {
+        public Guid Id { get; set; }
+        public string FileUrl { get; set; } = string.Empty;
+        public bool IsPrimary { get; set; }
     }
 }

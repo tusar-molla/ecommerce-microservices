@@ -1,6 +1,7 @@
 ﻿using CatalogService.Application.Interfaces;
 using CatalogService.Infrastructure.Persistence;
 using CatalogService.Infrastructure.Repositories;
+using CatalogService.Infrastructure.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System;
@@ -19,6 +20,8 @@ namespace CatalogService.Infrastructure
             services.AddSingleton<IDbConnectionFactory>(new SqlConnectionFactory(connectionString));
             services.AddScoped<IProductRepository, ProductRepository>();
             services.AddScoped<ICategoryRepository, CategoryRepository>();
+            services.AddScoped<IFileStorageService, LocalFileStorageService>();
+            services.AddScoped<IFileRepository, FileRepository>();
             return services;
         }
     }

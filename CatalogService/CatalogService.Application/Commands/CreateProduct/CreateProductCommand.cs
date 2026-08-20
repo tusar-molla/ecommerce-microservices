@@ -12,6 +12,13 @@ namespace CatalogService.Application.Commands.CreateProduct
         public decimal Price { get; set; }
         public string Sku { get; set; } = string.Empty;
         public Guid CategoryId { get; set; }
-        public string ImageUrl { get; set; } = string.Empty;
+        public List<UploadedFileData> Images { get; set; } = new();
+    }
+
+    public class UploadedFileData
+    {
+        public Stream FileStream { get; set; } = Stream.Null;
+        public string FileName { get; set; } = string.Empty;
+        public string ContentType { get; set; } = string.Empty;
     }
 }

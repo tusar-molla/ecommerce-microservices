@@ -9,10 +9,12 @@ namespace CatalogService.Application.Queries.GetProductById
     public class GetProductByIdQueryHandler : IRequestHandler<GetProductByIdQuery, ProductDto?>
     {
         private readonly IProductRepository _productRepository;
+        private readonly IFileRepository _fileRepository;
 
-        public GetProductByIdQueryHandler(IProductRepository productRepository)
+        public GetProductByIdQueryHandler(IProductRepository productRepository, IFileRepository fileRepository)
         {
             _productRepository = productRepository;
+            _fileRepository = fileRepository;
         }
         public async Task<ProductDto?> Handle(GetProductByIdQuery request, CancellationToken cancellationToken)
         {
@@ -22,6 +24,8 @@ namespace CatalogService.Application.Queries.GetProductById
                 return null;
             }
 
+            var files = await _fileRepository.GetByEntityAsync("Product", product.Id);
+
             return new ProductDto
             {
                 Id = product.Id,
@@ -30,7 +34,12 @@ namespace CatalogService.Application.Queries.GetProductById
                 Price = product.Price,
                 Sku = product.Sku,
                 CategoryId = product.CategoryId,
-                ImageUrl = product.ImageUrl
+                Images = files.Select(f => new ProductImageDto
+                {
+                    Id = f.Id,
+                    FileUrl = f.FileUrl,
+                    IsPrimary = f.IsPrimary
+                }).ToList()
             };
         }
     }

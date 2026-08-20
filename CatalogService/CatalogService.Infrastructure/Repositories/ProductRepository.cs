@@ -21,8 +21,8 @@ namespace CatalogService.Infrastructure.Repositories
             using var connection = _connectionFactory.CreateConnection();
 
             const string sql = @"
-            INSERT INTO Products (Id, Name, Description, Price, Sku, CategoryId, ImageUrl, IsActive, CreatedAt)
-            VALUES (@Id, @Name, @Description, @Price, @Sku, @CategoryId, @ImageUrl, @IsActive, @CreatedAt)";
+            INSERT INTO Products (Id, Name, Description, Price, Sku, CategoryId, IsActive, CreatedAt)
+            VALUES (@Id, @Name, @Description, @Price, @Sku, @CategoryId, @IsActive, @CreatedAt)";
 
             await connection.ExecuteAsync(sql, product);
             return product.Id;
@@ -33,7 +33,7 @@ namespace CatalogService.Infrastructure.Repositories
             using var connection = _connectionFactory.CreateConnection();
 
             const string sql = @"
-            SELECT Id, Name, Description, Price, Sku, CategoryId, ImageUrl, IsActive, CreatedAt, UpdatedAt
+            SELECT Id, Name, Description, Price, Sku, CategoryId, IsActive, CreatedAt, UpdatedAt
             FROM Products
             WHERE Id = @Id AND IsActive = 1";
 
@@ -52,7 +52,7 @@ namespace CatalogService.Infrastructure.Repositories
           AND (@CategoryId IS NULL OR CategoryId = @CategoryId)";
 
             const string itemsSql = @"
-        SELECT Id, Name, Description, Price, Sku, CategoryId, ImageUrl, IsActive, CreatedAt, UpdatedAt
+        SELECT Id, Name, Description, Price, Sku, CategoryId, IsActive, CreatedAt, UpdatedAt
         FROM Products
         WHERE IsActive = 1
           AND (@CategoryId IS NULL OR CategoryId = @CategoryId)
@@ -90,7 +90,6 @@ namespace CatalogService.Infrastructure.Repositories
             Description = @Description,
             Price = @Price,
             CategoryId = @CategoryId,
-            ImageUrl = @ImageUrl,
             UpdatedAt = @UpdatedAt
         WHERE Id = @Id";
 

@@ -26,8 +26,7 @@ namespace CatalogService.Application.Commands.UpdateProduct
             existingProduct.Name = request.Name;
             existingProduct.Description = request.Description;
             existingProduct.Price = request.Price;
-            existingProduct.CategoryId = request.CategoryId;
-            existingProduct.ImageUrl = request.ImageUrl;
+            existingProduct.CategoryId = request.CategoryId;           
             existingProduct.UpdatedAt = DateTime.UtcNow;
 
             await _productRepository.UpdateAsync(existingProduct);
