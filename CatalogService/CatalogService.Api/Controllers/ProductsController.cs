@@ -1,5 +1,7 @@
 ﻿using CatalogService.Application.Commands.CreateProduct;
+using CatalogService.Application.Commands.DeleteImage;
 using CatalogService.Application.Commands.DeleteProduct;
+using CatalogService.Application.Commands.SetPrimaryImage;
 using CatalogService.Application.Commands.UpdateProduct;
 using CatalogService.Application.Commands.UploadProductImage;
 using CatalogService.Application.Queries.GetAllProducts;
@@ -147,5 +149,20 @@ namespace CatalogService.Api.Controllers
             return Ok(new { ImageUrl = imageUrl });
         }
 
+        [Authorize(Roles = "Admin")]
+        [HttpPatch("{id}/images/{imageId}/set-primary")]
+        public async Task<IActionResult> SetPrimaryImage(Guid id, Guid imageId)
+        {
+            await _mediator.Send(new SetPrimaryImageCommand { ProductId = id, ImageId = imageId });
+            return NoContent();
+        }
+
+        [Authorize(Roles = "Admin")]
+        [HttpDelete("{id}/images/{imageId}")]
+        public async Task<IActionResult> DeleteImage(Guid id, Guid imageId)
+        {
+            await _mediator.Send(new DeleteImageCommand { ProductId = id, ImageId = imageId });
+            return NoContent();
+        }
     }
 }
