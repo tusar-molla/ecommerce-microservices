@@ -13,5 +13,6 @@ namespace CatalogService.Application.Interfaces
         Task<bool> SkuExistsAsync(string sku);
         Task UpdateAsync(Product product);
         Task SoftDeleteAsync(Guid id);
+        Task<IEnumerable<Product>> GetByIdsAsync(IEnumerable<Guid> ids);
     }
 }

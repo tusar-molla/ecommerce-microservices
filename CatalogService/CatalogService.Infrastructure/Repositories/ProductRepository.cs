@@ -107,5 +107,17 @@ namespace CatalogService.Infrastructure.Repositories
 
             await connection.ExecuteAsync(sql, new { Id = id, UpdatedAt = DateTime.UtcNow });
         }
+
+        public async Task<IEnumerable<Product>> GetByIdsAsync(IEnumerable<Guid> ids)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+
+            const string sql = @"
+        SELECT Id, Name, Description, Price, Sku, CategoryId, IsActive, CreatedAt, UpdatedAt
+        FROM Products
+        WHERE Id IN @Ids AND IsActive = 1";
+
+            return await connection.QueryAsync<Product>(sql, new { Ids = ids });
+        }
     }
 }

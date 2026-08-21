@@ -6,6 +6,7 @@ using CatalogService.Application.Commands.UpdateProduct;
 using CatalogService.Application.Commands.UploadProductImage;
 using CatalogService.Application.Queries.GetAllProducts;
 using CatalogService.Application.Queries.GetProductById;
+using CatalogService.Application.Queries.GetProductsByIds;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -163,6 +164,18 @@ namespace CatalogService.Api.Controllers
         {
             await _mediator.Send(new DeleteImageCommand { ProductId = id, ImageId = imageId });
             return NoContent();
+        }
+
+        [HttpGet("bulk")]
+        public async Task<IActionResult> GetByIds([FromQuery] List<Guid> ids)
+        {
+            if (ids is null || ids.Count == 0)
+            {
+                return Ok(new List<object>());
+            }
+
+            var products = await _mediator.Send(new GetProductsByIdsQuery { Ids = ids });
+            return Ok(products);
         }
     }
 }
