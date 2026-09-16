@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using OrderService.Application.Interfaces;
+using OrderService.Infrastructure.ExternalServices;
 using OrderService.Infrastructure.Persistence;
 using OrderService.Infrastructure.Repositories;
 using System;
@@ -19,6 +20,12 @@ namespace OrderService.Infrastructure
             services.AddSingleton<IDbConnectionFactory>(new SqlConnectionFactory(connectionString));
             services.AddScoped<ICartRepository, CartRepository>();
 
+            services.AddHttpClient<IProductCatalogClient, ProductCatalogClient>(client =>
+            {
+                var catalogBaseUrl = configuration["Services:CatalogServiceBaseUrl"]
+                    ?? throw new InvalidOperationException("Services:CatalogServiceBaseUrl is missing.");
+                client.BaseAddress = new Uri(catalogBaseUrl);
+            });
             return services;
         }
     }
