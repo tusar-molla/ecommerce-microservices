@@ -116,5 +116,39 @@ namespace OrderService.Infrastructure.Repositories
             const string sql = "DELETE FROM CartItems WHERE CartId = @CartId";
             await connection.ExecuteAsync(sql, new { CartId = cartId });
         }
+
+        public async Task<int> DeleteAbandonedCartsAsync(int daysOld)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+            connection.Open();
+            using var transaction = connection.BeginTransaction();
+
+            try
+            {
+                const string deleteItemsSql = @"
+            DELETE FROM CartItems WHERE CartId IN (
+                SELECT Id FROM Carts
+                WHERE (UpdatedAt IS NOT NULL AND UpdatedAt < DATEADD(DAY, -@DaysOld, GETUTCDATE()))
+                   OR (UpdatedAt IS NULL AND CreatedAt < DATEADD(DAY, -@DaysOld, GETUTCDATE()))
+            )";
+
+                await connection.ExecuteAsync(deleteItemsSql, new { DaysOld = daysOld }, transaction);
+
+                const string deleteCartsSql = @"
+            DELETE FROM Carts
+            WHERE (UpdatedAt IS NOT NULL AND UpdatedAt < DATEADD(DAY, -@DaysOld, GETUTCDATE()))
+               OR (UpdatedAt IS NULL AND CreatedAt < DATEADD(DAY, -@DaysOld, GETUTCDATE()))";
+
+                var deletedCount = await connection.ExecuteAsync(deleteCartsSql, new { DaysOld = daysOld }, transaction);
+
+                transaction.Commit();
+                return deletedCount;
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
     }
 }

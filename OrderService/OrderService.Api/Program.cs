@@ -1,8 +1,9 @@
-using OrderService.Application;
-using OrderService.Infrastructure;
 using Hangfire;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using OrderService.Application;
+using OrderService.Infrastructure;
+using OrderService.Infrastructure.BackgroundJobs;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -73,7 +74,10 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.UseHangfireDashboard("/hangfire");
-
+RecurringJob.AddOrUpdate<CartCleanupJob>(
+    "cart-cleanup-job",
+    job => job.RunAsync(),
+Cron.Daily(2));
 app.MapControllers();
 
 app.Run();

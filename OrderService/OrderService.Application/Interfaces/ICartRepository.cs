@@ -14,5 +14,6 @@ namespace OrderService.Application.Interfaces
         Task AddOrUpdateItemAsync(CartItem item);
         Task RemoveItemAsync(Guid cartId, Guid productId);
         Task ClearCartAsync(Guid cartId);
+        Task<int> DeleteAbandonedCartsAsync(int daysOld);
     }
 }
