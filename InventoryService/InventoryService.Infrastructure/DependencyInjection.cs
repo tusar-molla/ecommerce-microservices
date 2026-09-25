@@ -1,17 +1,15 @@
-﻿using MassTransit;
+﻿using InventoryService.Application.EventHandlers;
+using InventoryService.Application.Interfaces;
+using InventoryService.Infrastructure.Persistence;
+using InventoryService.Infrastructure.Repositories;
+using MassTransit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using OrderService.Application.Interfaces;
-using OrderService.Infrastructure.BackgroundJobs;
-using OrderService.Infrastructure.ExternalServices;
-using OrderService.Infrastructure.Messaging;
-using OrderService.Infrastructure.Persistence;
-using OrderService.Infrastructure.Repositories;
 using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace OrderService.Infrastructure
+namespace InventoryService.Infrastructure
 {
     public static class DependencyInjection
     {
@@ -21,18 +19,13 @@ namespace OrderService.Infrastructure
                 ?? throw new InvalidOperationException("DefaultConnection string is missing.");
 
             services.AddSingleton<IDbConnectionFactory>(new SqlConnectionFactory(connectionString));
-            services.AddScoped<ICartRepository, CartRepository>();
-            services.AddScoped<IOrderRepository, OrderRepository>();
-            services.AddScoped<CartCleanupJob>();
-            services.AddHttpClient<IProductCatalogClient, ProductCatalogClient>(client =>
-            {
-                var catalogBaseUrl = configuration["Services:CatalogServiceBaseUrl"]
-                    ?? throw new InvalidOperationException("Services:CatalogServiceBaseUrl is missing.");
-                client.BaseAddress = new Uri(catalogBaseUrl);
-            });
-            services.AddScoped<IEventPublisher, MassTransitEventPublisher>();
+            services.AddScoped<IStockRepository, StockRepository>();
+            services.AddScoped<IStockReservationRepository, StockReservationRepository>();
+
             services.AddMassTransit(busConfig =>
             {
+                busConfig.AddConsumer<OrderPlacedEventConsumer>();
+
                 busConfig.UsingRabbitMq((context, cfg) =>
                 {
                     cfg.Host("localhost", "/", h =>
@@ -40,8 +33,14 @@ namespace OrderService.Infrastructure
                         h.Username("guest");
                         h.Password("guest");
                     });
+
+                    cfg.ReceiveEndpoint("inventory-order-placed-queue", e =>
+                    {
+                        e.ConfigureConsumer<OrderPlacedEventConsumer>(context);
+                    });
                 });
             });
+
             return services;
         }
     }

@@ -1,4 +1,4 @@
-﻿using System;
+﻿namespace ECommerce.Contracts.Events;
 
 public class OrderPlacedEvent
 {

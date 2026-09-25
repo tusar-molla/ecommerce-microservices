@@ -1,4 +1,5 @@
-﻿using MediatR;
+﻿using ECommerce.Contracts.Events;
+using MediatR;
 using OrderService.Application.Interfaces;
 using OrderService.Application.Models;
 using System;
@@ -12,15 +13,18 @@ namespace OrderService.Application.Commands.PlaceOrder
         private readonly ICartRepository _cartRepository;
         private readonly IOrderRepository _orderRepository;
         private readonly IProductCatalogClient _productCatalogClient;
+        private readonly IEventPublisher _eventPublisher;
 
         public PlaceOrderCommandHandler(
             ICartRepository cartRepository,
             IOrderRepository orderRepository,
-            IProductCatalogClient productCatalogClient)
+            IProductCatalogClient productCatalogClient,
+            IEventPublisher eventPublisher)
         {
             _cartRepository = cartRepository;
             _orderRepository = orderRepository;
             _productCatalogClient = productCatalogClient;
+            _eventPublisher = eventPublisher;
         }
 
         public async Task<Guid> Handle(PlaceOrderCommand request, CancellationToken cancellationToken)
@@ -76,6 +80,18 @@ namespace OrderService.Application.Commands.PlaceOrder
             await _orderRepository.CreateAsync(order, orderItems);
             await _cartRepository.ClearCartAsync(cart.Id);
 
+            var orderPlacedEvent = new OrderPlacedEvent
+            {
+                OrderId = order.Id,
+                UserId = order.UserId,
+                Items = orderItems.Select(oi => new OrderPlacedItem
+                {
+                    ProductId = oi.ProductId,
+                    Quantity = oi.Quantity
+                }).ToList()
+            };
+
+            await _eventPublisher.PublishAsync(orderPlacedEvent);
             return orderId;
         }
     }
