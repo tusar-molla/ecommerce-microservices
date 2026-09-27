@@ -14,5 +14,6 @@ namespace CatalogService.Application.Interfaces
         Task UpdateAsync(Product product);
         Task SoftDeleteAsync(Guid id);
         Task<IEnumerable<Product>> GetByIdsAsync(IEnumerable<Guid> ids);
+        Task<IEnumerable<Guid>> GetAllIdsAsync();
     }
 }

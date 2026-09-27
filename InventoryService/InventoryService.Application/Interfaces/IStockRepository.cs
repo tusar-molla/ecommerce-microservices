@@ -10,5 +10,6 @@ namespace InventoryService.Application.Interfaces
         Task<Stock?> GetByProductIdAsync(Guid productId);
         Task<Guid> CreateAsync(Stock stock);
         Task UpdateAsync(Stock stock);
+        Task<IEnumerable<Guid>> GetExistingProductIdsAsync(IEnumerable<Guid> productIds);
     }
 }

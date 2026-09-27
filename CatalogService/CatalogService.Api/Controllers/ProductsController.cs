@@ -4,6 +4,7 @@ using CatalogService.Application.Commands.DeleteProduct;
 using CatalogService.Application.Commands.SetPrimaryImage;
 using CatalogService.Application.Commands.UpdateProduct;
 using CatalogService.Application.Commands.UploadProductImage;
+using CatalogService.Application.Queries.GetAllProductIds;
 using CatalogService.Application.Queries.GetAllProducts;
 using CatalogService.Application.Queries.GetProductById;
 using CatalogService.Application.Queries.GetProductsByIds;
@@ -176,6 +177,13 @@ namespace CatalogService.Api.Controllers
 
             var products = await _mediator.Send(new GetProductsByIdsQuery { Ids = ids });
             return Ok(products);
+        }
+
+        [HttpGet("ids")]
+        public async Task<IActionResult> GetAllIds()
+        {
+            var ids = await _mediator.Send(new GetAllProductIdsQuery());
+            return Ok(ids);
         }
     }
 }

@@ -53,6 +53,14 @@ namespace InventoryService.Infrastructure.Repositories
             WHERE ProductId = @ProductId";
 
             await connection.ExecuteAsync(sql, stock);
-        }    
-}
+        }
+
+        public async Task<IEnumerable<Guid>> GetExistingProductIdsAsync(IEnumerable<Guid> productIds)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+
+            const string sql = "SELECT ProductId FROM Stock WHERE ProductId IN @ProductIds";
+            return await connection.QueryAsync<Guid>(sql, new { ProductIds = productIds });
+        }
+    }
 }

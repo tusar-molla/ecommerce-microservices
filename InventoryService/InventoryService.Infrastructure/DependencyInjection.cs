@@ -1,13 +1,12 @@
 ﻿using InventoryService.Application.EventHandlers;
 using InventoryService.Application.Interfaces;
+using InventoryService.Infrastructure.ExternalServices;
 using InventoryService.Infrastructure.Persistence;
 using InventoryService.Infrastructure.Repositories;
 using MassTransit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System;
-using System.Collections.Generic;
-using System.Text;
 
 namespace InventoryService.Infrastructure
 {
@@ -39,6 +38,13 @@ namespace InventoryService.Infrastructure
                         e.ConfigureConsumer<OrderPlacedEventConsumer>(context);
                     });
                 });
+            });
+
+            services.AddHttpClient<IProductCatalogClient, ProductCatalogClient>(client =>
+            {
+                var catalogBaseUrl = configuration["Services:CatalogServiceBaseUrl"]
+                    ?? throw new InvalidOperationException("Services:CatalogServiceBaseUrl is missing.");
+                client.BaseAddress = new Uri(catalogBaseUrl);
             });
 
             return services;

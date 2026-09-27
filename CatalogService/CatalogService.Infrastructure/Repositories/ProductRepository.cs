@@ -119,5 +119,11 @@ namespace CatalogService.Infrastructure.Repositories
 
             return await connection.QueryAsync<Product>(sql, new { Ids = ids });
         }
+        public async Task<IEnumerable<Guid>> GetAllIdsAsync()
+        {
+            using var connection = _connectionFactory.CreateConnection();
+            const string sql = "SELECT Id FROM Products WHERE IsActive = 1";
+            return await connection.QueryAsync<Guid>(sql);
+        }
     }
 }
