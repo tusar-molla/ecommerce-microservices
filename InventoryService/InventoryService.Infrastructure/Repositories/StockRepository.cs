@@ -62,5 +62,57 @@ namespace InventoryService.Infrastructure.Repositories
             const string sql = "SELECT ProductId FROM Stock WHERE ProductId IN @ProductIds";
             return await connection.QueryAsync<Guid>(sql, new { ProductIds = productIds });
         }
+        public async Task<bool> TryReserveStockAsync(Guid productId, int quantity)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+
+            const string sql = @"
+        UPDATE Stock
+        SET QuantityAvailable = QuantityAvailable - @Quantity,
+            QuantityReserved = QuantityReserved + @Quantity,
+            UpdatedAt = @UpdatedAt
+        WHERE ProductId = @ProductId
+          AND QuantityAvailable >= @Quantity";
+
+            var rowsAffected = await connection.ExecuteAsync(sql, new
+            {
+                ProductId = productId,
+                Quantity = quantity,
+                UpdatedAt = DateTime.UtcNow
+            });
+
+            return rowsAffected > 0;
+        }
+
+        public async Task ReleaseStockAsync(Guid productId, int quantity)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+
+            const string sql = @"
+        UPDATE Stock
+        SET QuantityAvailable = QuantityAvailable + @Quantity,
+            QuantityReserved = QuantityReserved - @Quantity,
+            UpdatedAt = @UpdatedAt
+        WHERE ProductId = @ProductId";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                ProductId = productId,
+                Quantity = quantity,
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
+
+        public async Task<IEnumerable<Stock>> GetByProductIdsAsync(IEnumerable<Guid> productIds)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+
+            const string sql = @"
+        SELECT Id, ProductId, QuantityAvailable, QuantityReserved, UpdatedAt
+        FROM Stock
+        WHERE ProductId IN @ProductIds";
+
+            return await connection.QueryAsync<Stock>(sql, new { ProductIds = productIds });
+        }
     }
 }

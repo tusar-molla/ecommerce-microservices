@@ -11,5 +11,6 @@ namespace OrderService.Application.Interfaces
         Task<Order?> GetByIdAsync(Guid id);
         Task<IEnumerable<OrderItem>> GetItemsAsync(Guid orderId);
         Task<IEnumerable<Order>> GetByUserIdAsync(Guid userId);
+        Task UpdateStatusAsync(Guid orderId, OrderStatus status);
     }
 }

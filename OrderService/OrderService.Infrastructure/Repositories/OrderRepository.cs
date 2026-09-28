@@ -102,6 +102,23 @@ namespace OrderService.Infrastructure.Repositories
 
             return await connection.QueryAsync<Order>(sql, new { UserId = userId });
         }
+
+        public async Task UpdateStatusAsync(Guid orderId, OrderStatus status)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+
+            const string sql = @"
+        UPDATE Orders
+        SET Status = @Status, UpdatedAt = @UpdatedAt
+        WHERE Id = @Id";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                Id = orderId,
+                Status = status.ToString(),
+                UpdatedAt = DateTime.UtcNow
+            });
+        }
     }
 }
 

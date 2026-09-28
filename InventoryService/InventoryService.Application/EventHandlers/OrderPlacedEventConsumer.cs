@@ -23,39 +23,36 @@ namespace InventoryService.Application.EventHandlers
         public async Task Consume(ConsumeContext<OrderPlacedEvent> context)
         {
             var orderEvent = context.Message;
-
             var unavailableProductIds = new List<Guid>();
-            var stockUpdates = new List<Stock>();
+            var successfullyReservedItems = new List<OrderPlacedItem>();
 
             foreach (var item in orderEvent.Items)
             {
-                var stock = await _stockRepository.GetByProductIdAsync(item.ProductId);
+                var reserved = await _stockRepository.TryReserveStockAsync(item.ProductId, item.Quantity);
 
-                if (stock is null || stock.QuantityAvailable < item.Quantity)
+                if (reserved)
+                {
+                    successfullyReservedItems.Add(item);
+                }
+                else
                 {
                     unavailableProductIds.Add(item.ProductId);
-                    continue;
                 }
-
-                stock.QuantityAvailable -= item.Quantity;
-                stock.QuantityReserved += item.Quantity;
-                stock.UpdatedAt = DateTime.UtcNow;
-                stockUpdates.Add(stock);
             }
 
             if (unavailableProductIds.Count > 0)
             {
+                foreach (var item in successfullyReservedItems)
+                {
+                    await _stockRepository.ReleaseStockAsync(item.ProductId, item.Quantity);
+                }
+
                 await context.Publish(new StockUnavailableEvent
                 {
                     OrderId = orderEvent.OrderId,
                     UnavailableProductIds = unavailableProductIds
                 });
                 return;
-            }
-
-            foreach (var stock in stockUpdates)
-            {
-                await _stockRepository.UpdateAsync(stock);
             }
 
             foreach (var item in orderEvent.Items)
@@ -69,10 +66,7 @@ namespace InventoryService.Application.EventHandlers
                 });
             }
 
-            await context.Publish(new StockReservedEvent
-            {
-                OrderId = orderEvent.OrderId
-            });
+            await context.Publish(new StockReservedEvent { OrderId = orderEvent.OrderId });
         }
     }
 }

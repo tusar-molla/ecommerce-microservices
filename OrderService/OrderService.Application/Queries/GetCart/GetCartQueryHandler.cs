@@ -10,11 +10,13 @@ namespace OrderService.Application.Queries.GetCart
     {
         private readonly ICartRepository _cartRepository;
         private readonly IProductCatalogClient _productCatalogClient;
+        private readonly IInventoryClient _inventoryClient;
 
-        public GetCartQueryHandler(ICartRepository cartRepository, IProductCatalogClient productCatalogClient)
+        public GetCartQueryHandler(ICartRepository cartRepository, IProductCatalogClient productCatalogClient, IInventoryClient inventoryClient)
         {
             _cartRepository = cartRepository;
             _productCatalogClient = productCatalogClient;
+            _inventoryClient = inventoryClient;
         }
 
         public async Task<CartDto> Handle(GetCartQuery request, CancellationToken cancellationToken)
@@ -37,18 +39,23 @@ namespace OrderService.Application.Queries.GetCart
             var catalogProducts = (await _productCatalogClient.GetProductsByIdsAsync(productIds))
                 .ToDictionary(p => p.Id);
 
+            var stockLevels = (await _inventoryClient.GetStockLevelsAsync(productIds)).ToDictionary(s => s.ProductId);
+
             var itemDtos = cartItems
-                .Where(ci => catalogProducts.ContainsKey(ci.ProductId)) // skip items whose product no longer exists/active
+                .Where(ci => catalogProducts.ContainsKey(ci.ProductId))
                 .Select(ci =>
                 {
                     var product = catalogProducts[ci.ProductId];
+                    var availableQty = stockLevels.TryGetValue(ci.ProductId, out var stock) ? stock.QuantityAvailable : 0;
+
                     return new CartItemDto
                     {
                         ProductId = ci.ProductId,
                         ProductName = product.Name,
                         UnitPrice = product.Price,
                         Quantity = ci.Quantity,
-                        ImageUrl = product.ImageUrl
+                        ImageUrl = product.ImageUrl,
+                        QuantityAvailable = availableQty
                     };
                 })
                 .ToList();

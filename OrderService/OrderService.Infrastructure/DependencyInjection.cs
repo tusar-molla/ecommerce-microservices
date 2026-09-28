@@ -1,6 +1,7 @@
 ﻿using MassTransit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using OrderService.Application.EventHandlers;
 using OrderService.Application.Interfaces;
 using OrderService.Infrastructure.BackgroundJobs;
 using OrderService.Infrastructure.ExternalServices;
@@ -30,15 +31,35 @@ namespace OrderService.Infrastructure
                     ?? throw new InvalidOperationException("Services:CatalogServiceBaseUrl is missing.");
                 client.BaseAddress = new Uri(catalogBaseUrl);
             });
+
+            services.AddHttpClient<IInventoryClient, InventoryClient>(client =>
+            {
+                var inventoryBaseUrl = configuration["Services:InventoryServiceBaseUrl"]
+                    ?? throw new InvalidOperationException("Services:InventoryServiceBaseUrl is missing.");
+                client.BaseAddress = new Uri(inventoryBaseUrl);
+            });
             services.AddScoped<IEventPublisher, MassTransitEventPublisher>();
             services.AddMassTransit(busConfig =>
             {
+                busConfig.AddConsumer<StockReservedEventConsumer>();
+                busConfig.AddConsumer<StockUnavailableEventConsumer>();
+
                 busConfig.UsingRabbitMq((context, cfg) =>
                 {
                     cfg.Host("localhost", "/", h =>
                     {
                         h.Username("guest");
                         h.Password("guest");
+                    });
+
+                    cfg.ReceiveEndpoint("order-stock-reserved-queue", e =>
+                    {
+                        e.ConfigureConsumer<StockReservedEventConsumer>(context);
+                    });
+
+                    cfg.ReceiveEndpoint("order-stock-unavailable-queue", e =>
+                    {
+                        e.ConfigureConsumer<StockUnavailableEventConsumer>(context);
                     });
                 });
             });

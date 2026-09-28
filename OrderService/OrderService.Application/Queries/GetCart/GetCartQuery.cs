@@ -24,6 +24,8 @@ namespace OrderService.Application.Queries.GetCart
         public decimal UnitPrice { get; set; }
         public int Quantity { get; set; }
         public string ImageUrl { get; set; } = string.Empty;
+        public int QuantityAvailable { get; set; }
+        public bool IsAvailable => QuantityAvailable >= Quantity;
         public decimal LineTotal => UnitPrice * Quantity;
     }
 }
