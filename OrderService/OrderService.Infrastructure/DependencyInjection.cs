@@ -43,6 +43,8 @@ namespace OrderService.Infrastructure
             {
                 busConfig.AddConsumer<StockReservedEventConsumer>();
                 busConfig.AddConsumer<StockUnavailableEventConsumer>();
+                busConfig.AddConsumer<PaymentCompletedEventConsumer>();
+                busConfig.AddConsumer<PaymentFailedEventConsumer>();
 
                 busConfig.UsingRabbitMq((context, cfg) =>
                 {
@@ -60,6 +62,16 @@ namespace OrderService.Infrastructure
                     cfg.ReceiveEndpoint("order-stock-unavailable-queue", e =>
                     {
                         e.ConfigureConsumer<StockUnavailableEventConsumer>(context);
+                    });
+
+                    cfg.ReceiveEndpoint("order-payment-completed-queue", e =>
+                    {
+                        e.ConfigureConsumer<PaymentCompletedEventConsumer>(context);
+                    });
+
+                    cfg.ReceiveEndpoint("order-payment-failed-queue", e =>
+                    {
+                        e.ConfigureConsumer<PaymentFailedEventConsumer>(context);
                     });
                 });
             });

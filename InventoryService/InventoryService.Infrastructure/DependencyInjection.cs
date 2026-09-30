@@ -24,6 +24,7 @@ namespace InventoryService.Infrastructure
             services.AddMassTransit(busConfig =>
             {
                 busConfig.AddConsumer<OrderPlacedEventConsumer>();
+                busConfig.AddConsumer<StockReleaseRequestedEventConsumer>();
 
                 busConfig.UsingRabbitMq((context, cfg) =>
                 {
@@ -36,6 +37,11 @@ namespace InventoryService.Infrastructure
                     cfg.ReceiveEndpoint("inventory-order-placed-queue", e =>
                     {
                         e.ConfigureConsumer<OrderPlacedEventConsumer>(context);
+                    });
+
+                    cfg.ReceiveEndpoint("inventory-stock-release-queue", e =>
+                    {
+                        e.ConfigureConsumer<StockReleaseRequestedEventConsumer>(context);
                     });
                 });
             });
