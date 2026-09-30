@@ -1,13 +1,11 @@
-using Hangfire;
+using PaymentService.Application;
+using PaymentService.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using OrderService.Application;
-using OrderService.Infrastructure;
-using OrderService.Infrastructure.BackgroundJobs;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddScoped<OrderService.Api.Filters.InternalApiKeyFilter>();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -29,16 +27,6 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// Hangfire
-builder.Services.AddHangfire(config => config
-    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UseSqlServerStorage(builder.Configuration.GetConnectionString("HangfireConnection")));
-
-builder.Services.AddHangfireServer();
-
-// JWT Authentication
 var jwtSecretKey = builder.Configuration["Jwt:SecretKey"]!;
 var jwtIssuer = builder.Configuration["Jwt:Issuer"]!;
 var jwtAudience = builder.Configuration["Jwt:Audience"]!;
@@ -69,15 +57,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.UseAuthentication();
 app.UseAuthorization();
-
-app.UseHangfireDashboard("/hangfire");
-RecurringJob.AddOrUpdate<CartCleanupJob>(
-    "cart-cleanup-job",
-    job => job.RunAsync(),
-Cron.Daily(2));
 app.MapControllers();
 
 app.Run();

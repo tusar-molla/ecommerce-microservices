@@ -18,6 +18,7 @@ namespace OrderService.Application.Queries.GetOrderById
         public string ShippingAddress { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
         public List<OrderItemDto> Items { get; set; } = new();
+        public Guid UserId { get; set; }
     }
 
     public class OrderItemDto

@@ -27,6 +27,7 @@ builder.Services.AddSwaggerGen(options =>
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddScoped<IdentityService.Api.Filters.InternalApiKeyFilter>();
 
 // JWT Authentication
 var jwtSecretKey = builder.Configuration["Jwt:SecretKey"]!;

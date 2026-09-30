@@ -1,4 +1,5 @@
-﻿using IdentityService.Application.Commands.LoginUser;
+﻿using IdentityService.Api.Filters;
+using IdentityService.Application.Commands.LoginUser;
 using IdentityService.Application.Commands.Logout;
 using IdentityService.Application.Commands.RefreshToken;
 using IdentityService.Application.Commands.RegisterUser;
@@ -87,6 +88,15 @@ namespace IdentityService.Api.Controllers
         public class LogoutRequestBody
         {
             public string RefreshToken { get; set; } = string.Empty;
+        }
+
+        [HttpGet("internal/{userId}")]
+        [ServiceFilter(typeof(InternalApiKeyFilter))]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetUserInternal(Guid userId)
+        {
+            var user = await _mediator.Send(new GetCurrentUserQuery { UserId = userId });
+            return Ok(user);
         }
     }
 }

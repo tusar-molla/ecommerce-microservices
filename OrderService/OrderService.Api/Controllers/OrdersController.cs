@@ -1,9 +1,11 @@
 ﻿using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OrderService.Api.Filters;
 using OrderService.Application.Commands.PlaceOrder;
-using OrderService.Application.Queries.GetOrderById;
 using OrderService.Application.Queries.GetMyOrders;
+using OrderService.Application.Queries.GetOrderById;
+using OrderService.Application.Queries.GetOrderByIdInternal;
 using System.Security.Claims;
 
 namespace OrderService.Api.Controllers
@@ -59,6 +61,21 @@ namespace OrderService.Api.Controllers
         {
             var orders = await _mediator.Send(new GetMyOrdersQuery { UserId = GetCurrentUserId() });
             return Ok(orders);
+        }
+
+        [HttpGet("internal/{orderId}")]
+        [ServiceFilter(typeof(InternalApiKeyFilter))]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetOrderInternal(Guid orderId)
+        {
+            var order = await _mediator.Send(new GetOrderByIdInternalQuery { OrderId = orderId });
+
+            if (order is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(order);
         }
     }
 
