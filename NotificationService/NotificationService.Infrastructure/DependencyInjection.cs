@@ -1,7 +1,10 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using MassTransit;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using NotificationService.Application.EventHandlers;
 using NotificationService.Application.Interfaces;
 using NotificationService.Infrastructure.Email;
+using NotificationService.Infrastructure.ExternalServices;
 using NotificationService.Infrastructure.Persistence;
 using NotificationService.Infrastructure.Repositories;
 using System;
@@ -19,6 +22,51 @@ namespace NotificationService.Infrastructure
             services.AddScoped<INotificationLogRepository, NotificationLogRepository>();
             services.AddScoped<IEmailSender, MailKitEmailSender>();
 
+
+            services.AddHttpClient<IOrderServiceClient, OrderServiceClient>(client =>
+            {
+                var url = configuration["Services:OrderServiceBaseUrl"]
+                    ?? throw new InvalidOperationException("Services:OrderServiceBaseUrl is missing.");
+                client.BaseAddress = new Uri(url);
+            });
+
+            services.AddHttpClient<IIdentityServiceClient, IdentityServiceClient>(client =>
+            {
+                var url = configuration["Services:IdentityServiceBaseUrl"]
+                    ?? throw new InvalidOperationException("Services:IdentityServiceBaseUrl is missing.");
+                client.BaseAddress = new Uri(url);
+            });
+
+            services.AddMassTransit(busConfig =>
+            {
+                busConfig.AddConsumer<PaymentCompletedEventConsumer>();
+                busConfig.AddConsumer<PaymentFailedEventConsumer>();
+                busConfig.AddConsumer<StockUnavailableEventConsumer>();
+
+                busConfig.UsingRabbitMq((context, cfg) =>
+                {
+                    cfg.Host("localhost", "/", h =>
+                    {
+                        h.Username("guest");
+                        h.Password("guest");
+                    });
+
+                    cfg.ReceiveEndpoint("notification-payment-completed-queue", e =>
+                    {
+                        e.ConfigureConsumer<PaymentCompletedEventConsumer>(context);
+                    });
+
+                    cfg.ReceiveEndpoint("notification-payment-failed-queue", e =>
+                    {
+                        e.ConfigureConsumer<PaymentFailedEventConsumer>(context);
+                    });
+
+                    cfg.ReceiveEndpoint("notification-stock-unavailable-queue", e =>
+                    {
+                        e.ConfigureConsumer<StockUnavailableEventConsumer>(context);
+                    });
+                });
+            });
             return services;
         }
     }

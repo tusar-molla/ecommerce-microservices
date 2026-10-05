@@ -57,5 +57,17 @@ namespace NotificationService.Infrastructure.Repositories
                 SentAt = status == NotificationStatus.Sent ? DateTime.UtcNow : (DateTime?)null
             });
         }
+
+        public async Task<bool> HasBeenSentAsync(Guid orderId, string notificationType)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+
+            const string sql = @"
+        SELECT COUNT(1) FROM NotificationLogs
+        WHERE OrderId = @OrderId AND NotificationType = @NotificationType AND Status = 'Sent'";
+
+            var count = await connection.ExecuteScalarAsync<int>(sql, new { OrderId = orderId, NotificationType = notificationType });
+            return count > 0;
+        }
     }
 }

@@ -9,5 +9,6 @@ namespace NotificationService.Application.Interfaces
     {
         Task<Guid> CreateAsync(NotificationLog log);
         Task UpdateStatusAsync(Guid id, NotificationStatus status, string? errorMessage);
+        Task<bool> HasBeenSentAsync(Guid orderId, string notificationType);
     }
 }
