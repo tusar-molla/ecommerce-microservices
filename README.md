@@ -1,12 +1,21 @@
 # E-Commerce Microservices Platform
 
-> A production-style e-commerce backend built with **.NET 10**: six independently deployable services, an **event-driven Saga with compensating transactions**, and a **real payment gateway integration** (SSLCommerz).
+> A production-style e-commerce backend built with **.NET 10**: six independently deployable services, an **event-driven Saga with compensating transactions**, a **real payment gateway integration** (SSLCommerz), and a **one-command Docker Compose environment**.
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-Dapper-CC2927?logo=microsoftsqlserver&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-MassTransit-FF6600?logo=rabbitmq&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-RabbitMQ-2496ED?logo=docker&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 ![Status](https://img.shields.io/badge/status-backend%20core%20complete-brightgreen)
+
+```powershell
+git clone https://github.com/tusar-molla/ecommerce-microservices.git
+cd ecommerce-microservices
+Copy-Item .env.example .env      # then edit .env (see "Configuration")
+docker compose up -d --build     # SQL Server, RabbitMQ and all six services
+```
+
+Then open the Swagger pages listed under [Getting started](#getting-started).
 
 ---
 
@@ -20,7 +29,9 @@
 - [Service reference](#service-reference)
 - [Tech stack](#tech-stack)
 - [Getting started](#getting-started)
+- [Configuration](#configuration)
 - [Try it: end-to-end walkthrough](#try-it-end-to-end-walkthrough)
+- [Useful commands and troubleshooting](#useful-commands-and-troubleshooting)
 - [Design decisions and trade-offs](#design-decisions-and-trade-offs)
 - [Known limitations and roadmap](#known-limitations-and-roadmap)
 - [Repository structure](#repository-structure)
@@ -40,7 +51,7 @@ A customer browses a catalog, fills a cart, checks out, pays through a real paym
 | **Payment** | Payments | SSLCommerz sandbox (redirect + IPN), server-side validation, duplicate-callback protection |
 | **Notification** | Notification log | Event-driven transactional email (SMTP), send-once guard, audit trail |
 
-Everything above is implemented and was verified end to end against the real SSLCommerz sandbox: the success path (paid, order confirmed, email sent) and the failure path (payment cancelled, order cancelled, stock released).
+The full flow was verified end to end against the real SSLCommerz sandbox: the success path (paid, order confirmed, email sent) and the failure path (payment cancelled, order cancelled, stock released).
 
 ---
 
@@ -53,11 +64,11 @@ flowchart TB
     Client(["Client<br/>Swagger today, React UI planned"])
 
     subgraph SVC["Microservices (.NET 10)"]
-        ID["Identity Service<br/>:7278"]
-        CAT["Catalog Service<br/>:7179"]
-        ORD["Order Service<br/>:7009"]
-        INV["Inventory Service<br/>:7301"]
-        PAY["Payment Service<br/>:7165"]
+        ID["Identity Service"]
+        CAT["Catalog Service"]
+        ORD["Order Service"]
+        INV["Inventory Service"]
+        PAY["Payment Service"]
         NOT["Notification Service"]
     end
 
@@ -102,7 +113,7 @@ flowchart TB
     NOT -->|"SMTP"| MAIL
 ```
 
-**How to read it:** solid arrows are client requests, data access, and asynchronous events. Dotted arrows are synchronous HTTP calls between services. Each service has its own database and never reads another service's tables.
+**How to read it:** solid arrows are client requests, data access, and asynchronous events. Dotted arrows are synchronous HTTP calls between services. Each service has its own database (one SQL Server instance, separate databases) and never reads another service's tables.
 
 ### Inside each service
 
@@ -123,6 +134,25 @@ flowchart LR
 - **Infrastructure** implements those interfaces. Swapping SSLCommerz for Stripe, Mailtrap for SendGrid, or local disk for S3 means writing one new class and changing one line of DI, with no changes to business logic.
 - **Api** is thin. Controllers only dispatch to MediatR (CQRS).
 - There is deliberately no separate Domain project (see [trade-offs](#design-decisions-and-trade-offs)).
+
+### What Docker Compose runs
+
+```mermaid
+flowchart LR
+    SQL[("sqlserver")] --> INIT["db-init<br/>runs database/setup.sql, then exits"]
+    INIT --> ID["identity-service"]
+    INIT --> CAT["catalog-service"]
+    INIT --> ORD["order-service"]
+    INIT --> INV["inventory-service"]
+    INIT --> PAY["payment-service"]
+    INIT --> NOT["notification-service"]
+    MQ{{"rabbitmq"}} --> ORD
+    MQ --> INV
+    MQ --> PAY
+    MQ --> NOT
+```
+
+Arrows show start-up order. Services that use messaging wait for RabbitMQ to be healthy. Every service waits for `db-init`, an idempotent job that creates all databases and tables and then exits. Inside the Compose network, services reach each other by name over plain HTTP (for example `http://catalog-service:8080`).
 
 ### Shared code
 
@@ -181,7 +211,7 @@ sequenceDiagram
     participant P as Payment
     participant N as Notification
 
-    Note over P: IPN fails validation, or the amount does not match
+    Note over P: IPN fails validation, the amount does not match, or the gateway session cannot be created
     P->>MQ: PaymentFailed
     MQ->>O: PaymentFailed
     Note over O: Status becomes Cancelled
@@ -196,6 +226,7 @@ sequenceDiagram
 |---|---|---|
 | Not enough stock at reservation time | Inventory (conditional UPDATE affects 0 rows) | `StockUnavailable` → order cancelled, customer emailed. Any items already reserved for that order are rolled back inside Inventory. |
 | Payment declined, cancelled, or invalid | Payment (gateway validation) | `PaymentFailed` → order cancelled, stock released, customer emailed |
+| Gateway session cannot be created (bad credentials, outage) | Payment (initiate call fails) | `PaymentFailed`, same compensation as a declined payment |
 | Amount in the callback differs from the order total | Payment (amount check) | Treated as a failed payment |
 | Duplicate IPN from the gateway | Payment (`ProcessedIpnCallbacks`) | Ignored |
 | Duplicate event delivery to Notification | Notification (send-once guard) | No second email |
@@ -270,6 +301,7 @@ flowchart TD
 | **Service-to-service auth** | Internal endpoints (`/internal/...`) are protected by an `X-Internal-Api-Key` filter, separate from customer JWTs. |
 | **Transactions** | Order plus items are written in one DB transaction. The cart is cleared only after the order is safely stored, and events are published after the commit. |
 | **Replaceable infrastructure** | Gateway, email, file storage, token blocklist, and messaging all sit behind interfaces defined in the Application layer. |
+| **One-command environment** | Multi-stage Dockerfiles per service, a Compose file with health checks and start-up ordering, and an idempotent `db-init` job. All settings come from environment variables, with no secrets in git or in images. |
 | **Background jobs** | Hangfire runs a daily job that deletes carts untouched for 30 days. |
 
 ---
@@ -277,7 +309,7 @@ flowchart TD
 ## Service reference
 
 <details>
-<summary><b>Identity Service</b> (<code>:7278</code>, <code>IdentityServiceDb</code>)</summary>
+<summary><b>Identity Service</b> (<code>:8081</code>, <code>IdentityServiceDb</code>)</summary>
 
 | Method | Route | Access | Purpose |
 |---|---|---|---|
@@ -294,7 +326,7 @@ Tables: `Users`, `RefreshTokens`, `RevokedAccessTokens`.
 </details>
 
 <details>
-<summary><b>Catalog Service</b> (<code>:7179</code>, <code>CatalogServiceDb</code>)</summary>
+<summary><b>Catalog Service</b> (<code>:8082</code>, <code>CatalogServiceDb</code>)</summary>
 
 | Method | Route | Access | Purpose |
 |---|---|---|---|
@@ -310,13 +342,13 @@ Tables: `Users`, `RefreshTokens`, `RevokedAccessTokens`.
 | DELETE | `/api/products/{id}/images/{imageId}` | Admin | Remove an image |
 | GET / POST | `/api/categories` | Public / Admin | List and create categories |
 
-Images live in a generic `Files` table (`EntityType` + `EntityId`) so other entities can reuse it. Storage is local disk behind `IFileStorageService`, ready for an S3 implementation.
+Images live in a generic `Files` table (`EntityType` + `EntityId`) so other entities can reuse it. Storage is local disk (a Docker volume) behind `IFileStorageService`, ready for an S3 implementation.
 
 Tables: `Categories`, `Products`, `Files`.
 </details>
 
 <details>
-<summary><b>Order Service</b> (<code>:7009</code>, <code>OrderServiceDb</code>)</summary>
+<summary><b>Order Service</b> (<code>:8083</code>, <code>OrderServiceDb</code>)</summary>
 
 | Method | Route | Access | Purpose |
 |---|---|---|---|
@@ -336,7 +368,7 @@ Tables: `Carts`, `CartItems`, `Orders`, `OrderItems` (plus `HangfireDb` for job 
 </details>
 
 <details>
-<summary><b>Inventory Service</b> (<code>:7301</code>, <code>InventoryServiceDb</code>)</summary>
+<summary><b>Inventory Service</b> (<code>:8084</code>, <code>InventoryServiceDb</code>)</summary>
 
 | Method | Route | Access | Purpose |
 |---|---|---|---|
@@ -353,7 +385,7 @@ Tables: `Stock`, `StockReservations`.
 </details>
 
 <details>
-<summary><b>Payment Service</b> (<code>:7165</code>, <code>PaymentServiceDb</code>)</summary>
+<summary><b>Payment Service</b> (<code>:8085</code>, <code>PaymentServiceDb</code>)</summary>
 
 | Method | Route | Access | Purpose |
 |---|---|---|---|
@@ -369,7 +401,7 @@ Tables: `Payments`, `ProcessedIpnCallbacks`.
 </details>
 
 <details>
-<summary><b>Notification Service</b> (<code>appsettings</code> port, <code>NotificationServiceDb</code>)</summary>
+<summary><b>Notification Service</b> (<code>:8086</code>, <code>NotificationServiceDb</code>)</summary>
 
 No public API. It only reacts to events.
 
@@ -399,7 +431,8 @@ Tables: `NotificationLogs`.
 | Email | MailKit over SMTP, Mailtrap sandbox inbox |
 | Background jobs | Hangfire (SQL Server storage) |
 | API docs | Swagger / OpenAPI per service |
-| Local infrastructure | Docker (RabbitMQ), ngrok (public URL for the payment IPN) |
+| Containers | Docker, Docker Compose (multi-stage builds) |
+| Local tooling | ngrok (public URL for the payment IPN) |
 
 ---
 
@@ -407,102 +440,125 @@ Tables: `NotificationLogs`.
 
 ### Prerequisites
 
-- .NET 10 SDK
-- SQL Server (Express is fine) and SSMS or another SQL client
-- Docker Desktop
-- Free accounts for: [SSLCommerz sandbox](https://developer.sslcommerz.com/registration/), [Mailtrap](https://mailtrap.io), [ngrok](https://ngrok.com)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) with at least **6 GB of memory** allocated (SQL Server alone needs 2 GB)
+- Free sandbox accounts for [SSLCommerz](https://developer.sslcommerz.com/registration/) and [Mailtrap](https://mailtrap.io)
+- [ngrok](https://ngrok.com), only if you want to complete a real sandbox payment
 
-### 1. Clone
+You do **not** need the .NET SDK or a local SQL Server to run the stack in Docker.
+
+### 1. Clone and configure
 
 ```powershell
 git clone https://github.com/tusar-molla/ecommerce-microservices.git
 cd ecommerce-microservices
+Copy-Item .env.example .env        # macOS/Linux: cp .env.example .env
 ```
 
-### 2. Create the databases
+Open `.env` and fill it in. See [Configuration](#configuration) for what each value does. `.env` is git-ignored.
 
-Run [`database/setup.sql`](database/setup.sql) in SSMS. It creates all seven databases and their tables, and is safe to re-run.
-
-### 3. Configure secrets
-
-Real configuration is not in git. Each service ships an `appsettings.Development.example.json`. Copy it to `appsettings.Development.json` and fill it in:
+### 2. Start everything
 
 ```powershell
-Get-ChildItem -Recurse -Filter appsettings.Development.example.json | ForEach-Object {
-    $target = Join-Path $_.DirectoryName "appsettings.Development.json"
-    if (-not (Test-Path $target)) { Copy-Item $_.FullName $target }
-}
+docker compose up -d --build
+docker compose ps -a
 ```
 
-Values that **must be identical** across services, or you'll see unexplained `401`s:
+The first run takes a few minutes (it downloads the SQL Server, .NET, and RabbitMQ images). When it's done, `db-init` shows `Exited (0)`, which means the databases were created, and everything else shows `running`.
 
-| Key | Must match in |
-|---|---|
-| `Jwt:SecretKey` (32+ characters), `Jwt:Issuer`, `Jwt:Audience` | All services |
-| `InternalApiKey` | Identity, Order, Payment, Notification |
-
-Other values to fill in: SQL connection strings, `SslCommerz:StoreId` and `StorePassword` (Payment), `Smtp:Username` and `Password` (Notification, from your Mailtrap inbox), and each `Services:*BaseUrl` to match the target service's port.
-
-The launch profiles set `ASPNETCORE_ENVIRONMENT=Development`, which is what loads these files.
-
-### 4. Start RabbitMQ
-
-```powershell
-docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
-```
-
-Management UI: http://localhost:15672 (guest / guest).
-
-### 5. Run the services
-
-Start each in its own terminal, or run them from Visual Studio:
-
-```powershell
-dotnet run --project IdentityService/IdentityService.Api --launch-profile https
-dotnet run --project CatalogService/CatalogService.Api --launch-profile https
-dotnet run --project OrderService/OrderService.Api --launch-profile https
-dotnet run --project InventoryService/InventoryService.Api --launch-profile https
-dotnet run --project PaymentService/PaymentService.Api --launch-profile https
-dotnet run --project NotificationService/NotificationService.Api --launch-profile https
-```
+### 3. Open the services
 
 | Service | Swagger |
 |---|---|
-| Identity | https://localhost:7278/swagger |
-| Catalog | https://localhost:7179/swagger |
-| Order | https://localhost:7009/swagger |
-| Inventory | https://localhost:7301/swagger |
-| Payment | https://localhost:7165/swagger |
-| Notification | Port in its `launchSettings.json` |
+| Identity | http://localhost:8081/swagger |
+| Catalog | http://localhost:8082/swagger |
+| Order | http://localhost:8083/swagger |
+| Inventory | http://localhost:8084/swagger |
+| Payment | http://localhost:8085/swagger |
+| Notification | http://localhost:8086/swagger (no endpoints, it only consumes events) |
+| RabbitMQ UI | http://localhost:15672 (user and password from `.env`, default guest / guest) |
+| SQL Server | `localhost,14333`, login `sa`, password `SA_PASSWORD` from `.env` |
 
-Order, Payment, and Notification call other services over HTTP, so start Identity, Catalog, and Inventory first. In RabbitMQ's **Queues** tab you should see one queue per consumer once everything is up.
+A token issued by Identity works on every service, because they all share the same `JWT_SECRET_KEY`. Use **Authorize** in each Swagger page.
 
-### 6. Expose Payment Service for the gateway callback
+### 4. Testing real payments (optional)
 
-SSLCommerz's servers must reach your machine to deliver the IPN:
+SSLCommerz's servers must be able to reach your machine to deliver the payment callback (IPN):
 
 ```powershell
-ngrok http https://localhost:7165
+ngrok http 8085
 ```
 
-Put the forwarding URL in Payment Service's `App:BaseUrl` and **restart Payment Service**. The free ngrok URL changes every session, so repeat this each time.
+Put the forwarding URL in `.env` as `PAYMENT_PUBLIC_BASE_URL`, then recreate Payment Service:
+
+```powershell
+docker compose up -d payment-service
+```
+
+Without this, everything up to creating the payment session works, but completing the payment does not.
+
+### Running from an IDE instead
+
+Each Api project has an `appsettings.Development.example.json`. Copy it to `appsettings.Development.json` (git-ignored), fill it in, and run the services with `dotnet run --project <Service>/<Service>.Api --launch-profile https`. In this mode you need a local SQL Server (run [`database/setup.sql`](database/setup.sql) against it) and RabbitMQ (`docker compose up -d rabbitmq` works). Ports are in each project's `Properties/launchSettings.json`, and the `Services:*BaseUrl` values must match them. Don't run the same service in both modes at once, or two copies will compete for the same queue.
+
+---
+
+## Configuration
+
+Nothing secret is committed. In Docker, configuration comes from `.env`, which Compose turns into environment variables (`Jwt__SecretKey` sets the setting `Jwt:SecretKey`). The committed `appsettings.json` files contain only logging settings.
+
+| `.env` variable | Purpose |
+|---|---|
+| `SA_PASSWORD` | SQL Server `sa` password. 8+ characters with upper, lower, digit and symbol. Avoid `; = " ' $` and spaces. It only takes effect when the SQL volume is first created. |
+| `JWT_SECRET_KEY` | Signing key shared by all services (32+ random characters) |
+| `INTERNAL_API_KEY` | Shared key for the internal service-to-service endpoints |
+| `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | Broker credentials (default guest / guest) |
+| `SSLCOMMERZ_STORE_ID`, `SSLCOMMERZ_STORE_PASSWORD` | Payment gateway sandbox credentials |
+| `PAYMENT_PUBLIC_BASE_URL` | Public URL of Payment Service, used for the gateway callbacks (your ngrok URL) |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | Mailtrap sandbox inbox credentials |
+
+Compose refuses to start if `SA_PASSWORD`, `JWT_SECRET_KEY`, or `INTERNAL_API_KEY` is missing. If the SSLCommerz or SMTP values are empty, the stack still starts, but payments and emails fail.
+
+Compose reads `.env` when it **creates** a container. After editing it, run `docker compose up -d` (not `restart`) so the affected services are recreated.
 
 ---
 
 ## Try it: end-to-end walkthrough
 
-1. **Create an Admin.** Register through `POST /api/auth/register`, then promote the account and log in again so the token carries the role:
+1. **Create an Admin.** Register through `POST /api/auth/register` on Identity, then promote the account with any SQL client connected to `localhost,14333`, and log in again so the token carries the role:
    ```sql
-   USE IdentityServiceDb;
-   UPDATE Users SET Role = 'Admin' WHERE Email = 'you@example.com';
+   UPDATE IdentityServiceDb.dbo.Users SET Role = 'Admin' WHERE Email = 'you@example.com';
    ```
-2. **Seed the catalog.** As Admin: create a category, then a product (`POST /api/products`, with an image if you like).
-3. **Stock it.** `GET /api/stock/missing` shows the product has no stock. Fix it with `POST /api/stock` and a quantity.
-4. **Shop.** Register and log in as a Customer, `POST /api/cart/items`, then `GET /api/cart` to see live price and availability.
+2. **Seed the catalog.** As Admin on Catalog: create a category, then a product (`POST /api/products`, with an image if you like).
+3. **Stock it.** On Inventory, `GET /api/stock/missing` shows the product has no stock record. Fix it with `POST /api/stock` and a quantity.
+4. **Shop.** Register and log in as a Customer, then on Order: `POST /api/cart/items`, and `GET /api/cart` to see live price and availability.
 5. **Check out.** `POST /api/orders/checkout`. Within a few seconds `GET /api/orders/{id}` shows `StockReserved`.
-6. **Pay.** `GET /api/payments/{orderId}/redirect-url`, open the returned URL in a browser, and complete a sandbox payment (test credentials are on the SSLCommerz sandbox dashboard).
+6. **Pay.** On Payment, `GET /api/payments/{orderId}/redirect-url`, open the returned URL in a browser, and complete a sandbox payment (test credentials are on the SSLCommerz sandbox dashboard). This needs the ngrok step above.
 7. **Watch it resolve.** The order becomes `Confirmed`, and the email appears in your Mailtrap inbox. The ngrok inspector at http://127.0.0.1:4040 shows the IPN arriving.
 8. **Break it on purpose.** Cancel the payment on the gateway page instead. The order becomes `Cancelled`, `Stock.QuantityAvailable` returns to its earlier value, and a cancellation email is sent.
+
+---
+
+## Useful commands and troubleshooting
+
+| Task | Command |
+|---|---|
+| Start or update everything | `docker compose up -d --build` |
+| See status | `docker compose ps -a` |
+| Follow one service's logs | `docker compose logs -f order-service` |
+| Rebuild one service after a code change | `docker compose up -d --build order-service` |
+| Apply `.env` changes | `docker compose up -d` |
+| Stop, keeping data | `docker compose down` |
+| Stop and wipe all data | `docker compose down -v` |
+
+| Symptom | Likely cause |
+|---|---|
+| Order stuck at `Pending` | Inventory isn't consuming `OrderPlaced`. Check `docker compose logs inventory-service` and the RabbitMQ queues. |
+| A service returns `401` | Token not authorized in that service's Swagger page, or it expired |
+| Payment row is `Failed` with "Store Credential Error" | `SSLCOMMERZ_*` values in `.env` are missing or still the placeholders. Fix them, then `docker compose up -d payment-service`. |
+| Payment stays `AwaitingGatewayRedirect` after paying | The gateway couldn't reach the IPN URL. Check ngrok is running and `PAYMENT_PUBLIC_BASE_URL` matches it. Use a **new** order afterwards, because an order's callback URLs are fixed when its payment session is created. |
+| Containers keep restarting | Not enough memory. Raise it in Docker Desktop under Settings, then Resources. |
+| `port is already allocated` | Another process uses 5672, 15672, 14333, or 8081-8086. Stop it, or change the left-hand port in `docker-compose.yml`. |
+| Can't log in to SQL Server after changing `SA_PASSWORD` | The password was set when the volume was first created. Run `docker compose down -v` to start fresh. |
 
 ---
 
@@ -510,9 +566,11 @@ Put the forwarding URL in Payment Service's `App:BaseUrl` and **restart Payment 
 
 - **Choreography over orchestration.** With three or four participants, independent consumers reacting to events are simple and loosely coupled. The cost is that the whole flow isn't visible in one place. If more steps are added, a MassTransit state-machine saga would centralize it.
 - **Dapper instead of EF Core.** SQL stays explicit and fast, and the business logic doesn't need a rich domain model. That also drove the choice of three projects per service instead of four (no separate Domain project).
+- **CQRS without separate read stores.** Commands and queries are separated in code with MediatR, and each service keeps one database. Splitting read and write stores adds eventual consistency and a projection to maintain, and isn't worth it without a measured scaling problem. Catalog is the natural place to try it first.
 - **Catalog and Inventory are separate on purpose.** Catalog is read-heavy and changes rarely. Inventory is write-heavy and needs strong consistency. Cataloging a product and stocking it are two business events, so creating a product does not silently create stock.
-- **Database per service.** No cross-service joins. Data that crosses a boundary travels by HTTP call (when needed now) or event (when it can be eventual).
+- **Database per service.** No cross-service joins. Data that crosses a boundary travels by HTTP call (when needed now) or event (when it can be eventual). In Docker the databases share one SQL Server instance for convenience, but are separate databases that never reference each other.
 - **Reservation is authoritative in Inventory, advisory elsewhere.** The cart shows stock hints and rejects obviously impossible quantities early, but only the atomic update in Inventory decides, because stock can change between adding to cart and checking out.
+- **Configuration through the environment.** The same image runs anywhere, and only the environment variables change. RabbitMQ's host, like the database connections and service URLs, is a setting rather than a hardcoded value.
 - **Test-friendly infrastructure.** Sandbox gateway, sandbox inbox, local disk storage, and SQL-backed token blocklist are all behind interfaces, so the production versions are additive changes.
 
 ---
@@ -526,18 +584,19 @@ Documented honestly so a reader knows what is and isn't covered.
 - **Dual-write problem.** An order is saved and then its event is published as two separate steps. A crash between them would leave an order stuck in `Pending`. The fix is the Outbox Pattern.
 - **Idempotency is partial.** Payment (IPN) and Notification are protected against duplicates. The Inventory and Order consumers don't yet deduplicate redelivered messages.
 - **No automated tests yet.** The flows were verified manually and through the real sandbox. Unit and integration tests are planned, plus a concurrent-checkout test to demonstrate the overselling guarantee under load.
-- **Secrets.** Config lives in gitignored files and the repo ships example templates, which suits local development. A secrets manager would be used in a real deployment.
+- **The Docker setup is for local use.** Containers run with `ASPNETCORE_ENVIRONMENT=Development` (Swagger on, Hangfire dashboard unauthenticated), traffic between services is plain HTTP, and SQL Server and RabbitMQ are published on the host. On a shared network, bind those ports to `127.0.0.1` in `docker-compose.yml`. A real deployment would also use a secrets manager.
 - **Cart is cleared at checkout,** before stock and payment are confirmed. A cancelled order doesn't restore it.
 
 **Roadmap**
 
+- [x] Docker Compose for one-command startup
 - [ ] Outbox Pattern for reliable event publishing
 - [ ] Idempotent consumers in Inventory and Order
-- [ ] Docker Compose for one-command startup of all services and infrastructure
+- [ ] Unit and integration tests, concurrency test for stock reservation
+- [ ] CI pipeline (build and test on every push)
 - [ ] API Gateway (YARP) as a single entry point
 - [ ] Redis for caching and the token blocklist, plus rate limiting
 - [ ] Distributed tracing (OpenTelemetry)
-- [ ] Unit and integration tests, concurrency test for stock reservation
 - [ ] S3-backed file storage
 - [ ] React frontend with SignalR for live order status
 
@@ -551,14 +610,18 @@ ecommerce-microservices/
 ├── IdentityService/
 │   ├── IdentityService.Api/
 │   ├── IdentityService.Application/
-│   └── IdentityService.Infrastructure/
-├── CatalogService/               # same three-project layout
+│   ├── IdentityService.Infrastructure/
+│   └── Dockerfile
+├── CatalogService/               # same layout in every service
 ├── OrderService/
 ├── InventoryService/
 ├── PaymentService/
 ├── NotificationService/
 ├── database/
-│   └── setup.sql                 # creates all databases and tables
+│   └── setup.sql                 # creates all databases and tables (idempotent)
+├── docker-compose.yml            # SQL Server, RabbitMQ, db-init and the six services
+├── .env.example                  # template for the git-ignored .env
+├── .dockerignore
 └── README.md
 ```
 
