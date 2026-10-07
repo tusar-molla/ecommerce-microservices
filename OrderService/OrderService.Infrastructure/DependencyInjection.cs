@@ -48,10 +48,10 @@ namespace OrderService.Infrastructure
 
                 busConfig.UsingRabbitMq((context, cfg) =>
                 {
-                    cfg.Host("localhost", "/", h =>
+                    cfg.Host(configuration["RabbitMq:Host"] ?? "localhost", "/", h =>
                     {
-                        h.Username("guest");
-                        h.Password("guest");
+                        h.Username(configuration["RabbitMq:Username"] ?? "guest");
+                        h.Password(configuration["RabbitMq:Password"] ?? "guest");
                     });
 
                     cfg.ReceiveEndpoint("order-stock-reserved-queue", e =>
