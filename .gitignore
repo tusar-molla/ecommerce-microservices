@@ -484,3 +484,9 @@ $RECYCLE.BIN/
 # Local secrets
 **/appsettings.Development.json
 **/appsettings.Local.json
+
+# Docker Compose secrets
+.env
+
+# Docker Compose secrets
+.env

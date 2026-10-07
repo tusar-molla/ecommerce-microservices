@@ -1,0 +1,207 @@
+# E-Commerce Microservices Platform - local stack
+#
+#   docker compose up -d --build
+#
+# Configuration comes from a git-ignored .env file (copy .env.example and fill it in).
+# Inside the compose network, services reach each other by service name over plain HTTP on 8080.
+
+name: ecommerce
+
+# ---- shared environment blocks (merged into services with <<: *name) ----
+x-jwt: &jwt
+  Jwt__SecretKey: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+  Jwt__Issuer: IdentityService
+  Jwt__Audience: ECommercePlatform
+
+x-rabbit: &rabbit
+  RabbitMq__Host: rabbitmq
+  RabbitMq__Username: ${RABBITMQ_USER:-guest}
+  RabbitMq__Password: ${RABBITMQ_PASSWORD:-guest}
+
+services:
+
+  # ---------------------------------------------------------------- infrastructure
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${SA_PASSWORD:?Set SA_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:14333:1433"          # host 14333 so it never clashes with a local SQL Server
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  # One-shot job: creates all databases and tables (script is idempotent), then exits.
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    volumes:
+      - ./database/setup.sql:/scripts/setup.sql:ro
+    command: ["/opt/mssql-tools18/bin/sqlcmd", "-S", "sqlserver", "-U", "sa", "-P", "${SA_PASSWORD}", "-C", "-b", "-i", "/scripts/setup.sql"]
+    restart: "no"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"         # management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- services
+  identity-service:
+    build:
+      context: .
+      dockerfile: IdentityService/Dockerfile
+    image: identity-service
+    ports:
+      - "8081:8080"
+    environment:
+      <<: *jwt
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=IdentityServiceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      Jwt__AccessTokenExpiryMinutes: "60"
+      InternalApiKey: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY in .env}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  catalog-service:
+    build:
+      context: .
+      dockerfile: CatalogService/Dockerfile
+    image: catalog-service
+    ports:
+      - "8082:8080"
+    environment:
+      <<: *jwt
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=CatalogServiceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      # Public address used to build image URLs that a browser on your machine can open
+      App__BaseUrl: http://localhost:8082
+    volumes:
+      - catalog-images:/app/wwwroot/images
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  order-service:
+    build:
+      context: .
+      dockerfile: OrderService/Dockerfile
+    image: order-service
+    ports:
+      - "8083:8080"
+    environment:
+      <<: [*jwt, *rabbit]
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=OrderServiceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      ConnectionStrings__HangfireConnection: "Server=sqlserver;Database=HangfireDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      InternalApiKey: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY in .env}
+      Services__CatalogServiceBaseUrl: http://catalog-service:8080
+      Services__InventoryServiceBaseUrl: http://inventory-service:8080
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: InventoryService/Dockerfile
+    image: inventory-service
+    ports:
+      - "8084:8080"
+    environment:
+      <<: [*jwt, *rabbit]
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=InventoryServiceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      Services__CatalogServiceBaseUrl: http://catalog-service:8080
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: PaymentService/Dockerfile
+    image: payment-service
+    ports:
+      - "8085:8080"
+    environment:
+      <<: [*jwt, *rabbit]
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=PaymentServiceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      InternalApiKey: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY in .env}
+      Services__OrderServiceBaseUrl: http://order-service:8080
+      Services__IdentityServiceBaseUrl: http://identity-service:8080
+      SslCommerz__StoreId: ${SSLCOMMERZ_STORE_ID:-}
+      SslCommerz__StorePassword: ${SSLCOMMERZ_STORE_PASSWORD:-}
+      SslCommerz__IsSandbox: "true"
+      SslCommerz__SandboxBaseUrl: https://sandbox.sslcommerz.com
+      # Must be a URL the gateway can reach: your ngrok URL (see README)
+      App__BaseUrl: ${PAYMENT_PUBLIC_BASE_URL:-http://localhost:8085}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: NotificationService/Dockerfile
+    image: notification-service
+    ports:
+      - "8086:8080"
+    environment:
+      <<: *rabbit
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=NotificationServiceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
+      InternalApiKey: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY in .env}
+      Services__OrderServiceBaseUrl: http://order-service:8080
+      Services__IdentityServiceBaseUrl: http://identity-service:8080
+      Smtp__Host: sandbox.smtp.mailtrap.io
+      Smtp__Port: "2525"
+      Smtp__Username: ${SMTP_USERNAME:-}
+      Smtp__Password: ${SMTP_PASSWORD:-}
+      Smtp__FromEmail: noreply@ecommerce-demo.com
+      Smtp__FromName: E-Commerce Platform
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  sqlserver-data:
+  rabbitmq-data:
+  catalog-images:
