@@ -80,6 +80,15 @@ namespace PaymentService.Application.EventHandlers
             };
 
             await _paymentRepository.CreateAsync(payment);
+
+            if (!initiateResult.Success)
+            {
+                await context.Publish(new PaymentFailedEvent
+                {
+                    OrderId = orderId,
+                    Reason = initiateResult.FailureReason ?? "Payment session could not be created"
+                });
+            }
         }
     }
 }
