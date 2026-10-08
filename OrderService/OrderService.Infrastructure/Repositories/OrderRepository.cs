@@ -17,7 +17,7 @@ namespace OrderService.Infrastructure.Repositories
             _connectionFactory = connectionFactory;
         }
 
-        public async Task<Guid> CreateAsync(Order order, List<OrderItem> items)
+        public async Task<Guid> CreateAsync(Order order, List<OrderItem> items,OutboxMessage outboxMessage)
         {
             using var connection = _connectionFactory.CreateConnection();
             connection.Open();
@@ -55,6 +55,19 @@ namespace OrderService.Infrastructure.Repositories
                         item.Quantity
                     }, transaction);
                 }
+
+                const string outboxSql = @"
+            INSERT INTO OutboxMessages (Id, EventType, Payload, CreatedAt)
+            VALUES (@Id, @EventType, @Payload, @CreatedAt)";
+
+                await connection.ExecuteAsync(outboxSql, new
+                {
+                    outboxMessage.Id,
+                    outboxMessage.EventType,
+                    outboxMessage.Payload,
+                    outboxMessage.CreatedAt
+                }, transaction);
+
 
                 transaction.Commit();
                 return order.Id;

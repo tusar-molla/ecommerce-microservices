@@ -75,6 +75,9 @@ namespace OrderService.Infrastructure
                     });
                 });
             });
+
+            services.AddScoped<IOutboxRepository, OutboxRepository>();
+            services.AddHostedService<OutboxPublisherService>();
             return services;
         }
     }

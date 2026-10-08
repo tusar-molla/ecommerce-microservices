@@ -7,7 +7,7 @@ namespace OrderService.Application.Interfaces
 {
     public interface IOrderRepository
     {
-        Task<Guid> CreateAsync(Order order, List<OrderItem> items);
+        Task<Guid> CreateAsync(Order order, List<OrderItem> items, OutboxMessage outboxMessage);
         Task<Order?> GetByIdAsync(Guid id);
         Task<IEnumerable<OrderItem>> GetItemsAsync(Guid orderId);
         Task<IEnumerable<Order>> GetByUserIdAsync(Guid userId);

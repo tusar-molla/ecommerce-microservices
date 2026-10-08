@@ -13,18 +13,15 @@ namespace OrderService.Application.Commands.PlaceOrder
         private readonly ICartRepository _cartRepository;
         private readonly IOrderRepository _orderRepository;
         private readonly IProductCatalogClient _productCatalogClient;
-        private readonly IEventPublisher _eventPublisher;
 
         public PlaceOrderCommandHandler(
             ICartRepository cartRepository,
             IOrderRepository orderRepository,
-            IProductCatalogClient productCatalogClient,
-            IEventPublisher eventPublisher)
+            IProductCatalogClient productCatalogClient)
         {
             _cartRepository = cartRepository;
             _orderRepository = orderRepository;
             _productCatalogClient = productCatalogClient;
-            _eventPublisher = eventPublisher;
         }
 
         public async Task<Guid> Handle(PlaceOrderCommand request, CancellationToken cancellationToken)
@@ -77,9 +74,6 @@ namespace OrderService.Application.Commands.PlaceOrder
                 ShippingAddress = request.ShippingAddress
             };
 
-            await _orderRepository.CreateAsync(order, orderItems);
-            await _cartRepository.ClearCartAsync(cart.Id);
-
             var orderPlacedEvent = new OrderPlacedEvent
             {
                 OrderId = order.Id,
@@ -91,7 +85,9 @@ namespace OrderService.Application.Commands.PlaceOrder
                 }).ToList()
             };
 
-            await _eventPublisher.PublishAsync(orderPlacedEvent);
+            await _orderRepository.CreateAsync(order, orderItems, OutboxMessage.From(orderPlacedEvent));
+            await _cartRepository.ClearCartAsync(cart.Id);
+
             return orderId;
         }
     }
