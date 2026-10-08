@@ -85,9 +85,7 @@ namespace OrderService.Application.Commands.PlaceOrder
                 }).ToList()
             };
 
-            await _orderRepository.CreateAsync(order, orderItems, OutboxMessage.From(orderPlacedEvent));
-            await _cartRepository.ClearCartAsync(cart.Id);
-
+            await _orderRepository.CreateAsync(order, orderItems, OutboxMessage.From(orderPlacedEvent), cart.Id);
             return orderId;
         }
     }

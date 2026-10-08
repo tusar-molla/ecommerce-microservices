@@ -17,14 +17,24 @@ namespace OrderService.Infrastructure.Repositories
             _connectionFactory = connectionFactory;
         }
 
-        public async Task<Guid> CreateAsync(Order order, List<OrderItem> items,OutboxMessage outboxMessage)
+        public async Task<Guid> CreateAsync(Order order, List<OrderItem> items,OutboxMessage outboxMessage,Guid cartId)
         {
             using var connection = _connectionFactory.CreateConnection();
             connection.Open();
             using var transaction = connection.BeginTransaction();
 
             try
-            {
+            {             
+                var removed = await connection.ExecuteAsync(
+                    "DELETE FROM CartItems WHERE CartId = @CartId",
+                    new { CartId = cartId }, transaction);
+
+                if (removed != items.Count)
+                {
+                    throw new InvalidOperationException(
+                        "Your cart changed while you were checking out. Please review your cart and try again.");
+                }
+
                 const string orderSql = @"
                 INSERT INTO Orders (Id, UserId, Status, TotalAmount, ShippingAddress, CreatedAt)
                 VALUES (@Id, @UserId, @Status, @TotalAmount, @ShippingAddress, @CreatedAt)";
