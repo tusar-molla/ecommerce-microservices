@@ -2,71 +2,55 @@
 using InventoryService.Application.Interfaces;
 using InventoryService.Application.Models;
 using MassTransit;
-using System;
-using System.Collections.Generic;
-using System.Text;
+using Microsoft.Extensions.Logging;
 
-namespace InventoryService.Application.EventHandlers
+namespace InventoryService.Application.EventHandlers;
+
+public class OrderPlacedEventConsumer : IConsumer<OrderPlacedEvent>
 {
-    public class OrderPlacedEventConsumer : IConsumer<OrderPlacedEvent>
+    private readonly IStockReservationRepository _reservationRepository;
+    private readonly ILogger<OrderPlacedEventConsumer> _logger;
+
+    public OrderPlacedEventConsumer(IStockReservationRepository reservationRepository,ILogger<OrderPlacedEventConsumer> logger)
     {
-        private readonly IStockRepository _stockRepository;
-        private readonly IStockReservationRepository _stockReservationRepository;
+        _reservationRepository = reservationRepository;
+        _logger = logger;
+    }
 
-        public OrderPlacedEventConsumer(
-            IStockRepository stockRepository,
-            IStockReservationRepository stockReservationRepository)
+    public async Task Consume(ConsumeContext<OrderPlacedEvent> context)
+    {
+        var order = context.Message;
+
+        var messageId = context.MessageId
+            ?? throw new InvalidOperationException("OrderPlaced arrived without a MessageId, so it cannot be de-duplicated.");
+
+        var items = order.Items
+            .Select(i => new ReservationItem(i.ProductId, i.Quantity))
+            .ToList();
+
+        var result = await _reservationRepository.ReserveForOrderAsync(
+            messageId, nameof(OrderPlacedEventConsumer), order.OrderId, items);
+
+        if (result.IsDuplicate)
         {
-            _stockRepository = stockRepository;
-            _stockReservationRepository = stockReservationRepository;
+            _logger.LogInformation(
+                "Duplicate OrderPlaced {MessageId} for order {OrderId}: no stock changed, repeating the recorded result",
+                messageId, order.OrderId);
         }
-        public async Task Consume(ConsumeContext<OrderPlacedEvent> context)
+
+        // On a duplicate the recorded result is sent again. That covers a crash after the commit but before the
+        // publish, which would otherwise leave the order waiting forever. Order and Payment must tolerate a repeat.
+        if (result.Outcome == ReservationOutcome.Reserved)
         {
-            var orderEvent = context.Message;
-            var unavailableProductIds = new List<Guid>();
-            var successfullyReservedItems = new List<OrderPlacedItem>();
-
-            foreach (var item in orderEvent.Items)
+            await context.Publish(new StockReservedEvent { OrderId = order.OrderId });
+        }
+        else
+        {
+            await context.Publish(new StockUnavailableEvent
             {
-                var reserved = await _stockRepository.TryReserveStockAsync(item.ProductId, item.Quantity);
-
-                if (reserved)
-                {
-                    successfullyReservedItems.Add(item);
-                }
-                else
-                {
-                    unavailableProductIds.Add(item.ProductId);
-                }
-            }
-
-            if (unavailableProductIds.Count > 0)
-            {
-                foreach (var item in successfullyReservedItems)
-                {
-                    await _stockRepository.ReleaseStockAsync(item.ProductId, item.Quantity);
-                }
-
-                await context.Publish(new StockUnavailableEvent
-                {
-                    OrderId = orderEvent.OrderId,
-                    UnavailableProductIds = unavailableProductIds
-                });
-                return;
-            }
-
-            foreach (var item in orderEvent.Items)
-            {
-                await _stockReservationRepository.CreateAsync(new StockReservation
-                {
-                    Id = Guid.NewGuid(),
-                    OrderId = orderEvent.OrderId,
-                    ProductId = item.ProductId,
-                    Quantity = item.Quantity
-                });
-            }
-
-            await context.Publish(new StockReservedEvent { OrderId = orderEvent.OrderId });
+                OrderId = order.OrderId,
+                UnavailableProductIds = result.UnavailableProductIds.ToList()
+            });
         }
     }
 }

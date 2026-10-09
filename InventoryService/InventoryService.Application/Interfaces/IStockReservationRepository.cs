@@ -9,5 +9,6 @@ namespace InventoryService.Application.Interfaces
     {
         Task<Guid> CreateAsync(StockReservation reservation);
         Task<IEnumerable<StockReservation>> GetByOrderIdAsync(Guid orderId);
+        Task<ReservationResult> ReserveForOrderAsync(Guid messageId, string consumer, Guid orderId, IReadOnlyList<ReservationItem> items);
     }
 }
