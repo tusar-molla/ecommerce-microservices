@@ -1,4 +1,5 @@
 using Hangfire;
+using Hangfire.Dashboard;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using OrderService.Application;
@@ -73,11 +74,28 @@ app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.UseHangfireDashboard("/hangfire");
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = app.Environment.IsDevelopment()
+        ? new IDashboardAuthorizationFilter[] { new AllowAllDashboardAuthorizationFilter() }
+        : new IDashboardAuthorizationFilter[] { new LocalRequestsOnlyAuthorizationFilter() }
+});
+
 RecurringJob.AddOrUpdate<CartCleanupJob>(
     "cart-cleanup-job",
     job => job.RunAsync(),
 Cron.Daily(2));
+
+RecurringJob.AddOrUpdate<OutboxCleanupJob>(
+    "outbox-cleanup-job",
+    job => job.RunAsync(),
+    Cron.Daily(3));
+
 app.MapControllers();
 
 app.Run();
+
+public class AllowAllDashboardAuthorizationFilter : IDashboardAuthorizationFilter
+{
+    public bool Authorize(DashboardContext context) => true;
+}

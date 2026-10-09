@@ -11,5 +11,6 @@ namespace OrderService.Application.Interfaces
         Task MarkProcessedAsync(Guid id);
         Task RecordFailureAsync(Guid id, string error);
         Task MarkDeadAsync(Guid id, string error);
+        Task<int> DeleteProcessedAsync(int olderThanDays);
     }
 }

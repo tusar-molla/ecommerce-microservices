@@ -78,6 +78,7 @@ namespace OrderService.Infrastructure
 
             services.AddScoped<IOutboxRepository, OutboxRepository>();
             services.AddHostedService<OutboxPublisherService>();
+            services.AddScoped<OutboxCleanupJob>();
             return services;
         }
     }

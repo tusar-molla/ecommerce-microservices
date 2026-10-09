@@ -58,5 +58,30 @@ namespace OrderService.Infrastructure.Repositories
         }
 
         private static string Truncate(string value) => value.Length <= 1000 ? value : value[..1000];
+
+
+        public async Task<int> DeleteProcessedAsync(int olderThanDays)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+
+            // Deleted in batches so a large backlog never holds one long lock on the table.
+            // Messages parked as DEAD are kept on purpose: they signal a bug and should stay visible.
+            const int batchSize = 5000;
+            const string sql = @"
+        DELETE TOP (@BatchSize) FROM OutboxMessages
+        WHERE ProcessedAt IS NOT NULL
+          AND ProcessedAt < DATEADD(DAY, -@Days, GETUTCDATE())
+          AND (LastError IS NULL OR LastError NOT LIKE 'DEAD:%')";
+
+            var total = 0;
+            int deleted;
+            do
+            {
+                deleted = await connection.ExecuteAsync(sql, new { BatchSize = batchSize, Days = olderThanDays });
+                total += deleted;
+            } while (deleted == batchSize);
+
+            return total;
+        }
     }
 }
