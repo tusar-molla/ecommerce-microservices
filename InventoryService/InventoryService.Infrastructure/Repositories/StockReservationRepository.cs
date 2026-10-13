@@ -153,5 +153,47 @@ namespace InventoryService.Infrastructure.Repositories
                 UnavailableProductIds = unavailable
             };
         }
+
+        public async Task<int> ReleaseForOrderAsync(Guid orderId)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+            connection.Open();
+            using var transaction = connection.BeginTransaction();
+
+            try
+            {
+                var released = (await connection.QueryAsync<ReleasedRow>(@"
+            UPDATE StockReservations
+            SET Status = 'Released'
+            OUTPUT inserted.ProductId, inserted.Quantity
+            WHERE OrderId = @OrderId AND Status = 'Reserved'",
+                    new { OrderId = orderId }, transaction)).ToList();
+
+                foreach (var row in released)
+                {
+                    await connection.ExecuteAsync(@"
+                UPDATE Stock
+                SET QuantityAvailable = QuantityAvailable + @Quantity,
+                    QuantityReserved  = QuantityReserved  - @Quantity,
+                    UpdatedAt = @Now
+                WHERE ProductId = @ProductId",
+                        new { row.ProductId, row.Quantity, Now = DateTime.UtcNow }, transaction);
+                }
+
+                transaction.Commit();
+                return released.Count;
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
+
+        private class ReleasedRow
+        {
+            public Guid ProductId { get; set; }
+            public int Quantity { get; set; }
+        }
     }
 }

@@ -24,12 +24,9 @@ public class OrderPlacedEventConsumer : IConsumer<OrderPlacedEvent>
         var messageId = context.MessageId
             ?? throw new InvalidOperationException("OrderPlaced arrived without a MessageId, so it cannot be de-duplicated.");
 
-        var items = order.Items
-            .Select(i => new ReservationItem(i.ProductId, i.Quantity))
-            .ToList();
+        var items = order.Items.Select(i => new ReservationItem(i.ProductId, i.Quantity)).ToList();
 
-        var result = await _reservationRepository.ReserveForOrderAsync(
-            messageId, nameof(OrderPlacedEventConsumer), order.OrderId, items);
+        var result = await _reservationRepository.ReserveForOrderAsync(messageId, nameof(OrderPlacedEventConsumer), order.OrderId, items);
 
         if (result.IsDuplicate)
         {
