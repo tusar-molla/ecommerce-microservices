@@ -13,5 +13,6 @@ namespace PaymentService.Application.Interfaces
         Task<Payment?> GetByTransactionIdAsync(string transactionId);
         Task<IEnumerable<Payment>> GetByUserIdAsync(Guid userId);
         Task UpdateAsync(Payment payment);
+        Task<bool> CompleteFromIpnAsync(Payment payment, string transactionId, OutboxMessage outboxMessage);
     }
 }

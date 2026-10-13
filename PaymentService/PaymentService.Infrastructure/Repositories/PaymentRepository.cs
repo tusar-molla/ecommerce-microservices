@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using Microsoft.Data.SqlClient;
 using PaymentService.Application.Interfaces;
 using PaymentService.Application.Models;
 using PaymentService.Infrastructure.Persistence;
@@ -123,6 +124,56 @@ namespace PaymentService.Infrastructure.Repositories
                 payment.FailureReason,
                 UpdatedAt = DateTime.UtcNow
             });
+        }
+
+        public async Task<bool> CompleteFromIpnAsync(Payment payment, string transactionId, OutboxMessage outboxMessage)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+            connection.Open();
+            using var transaction = connection.BeginTransaction();
+
+            try
+            {
+                try
+                {
+                    await connection.ExecuteAsync(
+                        "INSERT INTO ProcessedIpnCallbacks (TransactionId, ProcessedAt) VALUES (@TransactionId, @Now)",
+                        new { TransactionId = transactionId, Now = DateTime.UtcNow }, transaction);
+                }
+                catch (SqlException ex) when (ex.Number is 2627 or 2601)
+                {
+                    transaction.Rollback();
+                    return false; // this IPN was already processed
+                }
+
+                await connection.ExecuteAsync(@"
+            UPDATE Payments
+            SET Status = @Status, GatewayValidationId = @GatewayValidationId,
+                FailureReason = @FailureReason, UpdatedAt = @Now
+            WHERE Id = @Id",
+                    new
+                    {
+                        payment.Id,
+                        Status = payment.Status.ToString(),
+                        payment.GatewayValidationId,
+                        payment.FailureReason,
+                        Now = DateTime.UtcNow
+                    }, transaction);
+
+                await connection.ExecuteAsync(@"
+            INSERT INTO OutboxMessages (Id, EventType, Payload, CreatedAt)
+            VALUES (@Id, @EventType, @Payload, @CreatedAt)",
+                    new { outboxMessage.Id, outboxMessage.EventType, outboxMessage.Payload, outboxMessage.CreatedAt },
+                    transaction);
+
+                transaction.Commit();
+                return true;
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
         }
     }
 }

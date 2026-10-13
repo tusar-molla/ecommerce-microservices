@@ -5,6 +5,7 @@ using PaymentService.Application.EventHandlers;
 using PaymentService.Application.Interfaces;
 using PaymentService.Infrastructure.ExternalServices;
 using PaymentService.Infrastructure.Gateway;
+using PaymentService.Infrastructure.Messaging;
 using PaymentService.Infrastructure.Persistence;
 using PaymentService.Infrastructure.Repositories;
 using System;
@@ -21,6 +22,8 @@ namespace PaymentService.Infrastructure
             services.AddSingleton<IDbConnectionFactory>(new SqlConnectionFactory(connectionString));
             services.AddScoped<IPaymentRepository, PaymentRepository>();
             services.AddScoped<IIpnCallbackRepository, IpnCallbackRepository>();
+            services.AddScoped<IOutboxRepository, OutboxRepository>();
+            services.AddHostedService<OutboxPublisherService>();
 
             services.AddHttpClient<IPaymentGateway, SslCommerzPaymentGateway>(client =>
             {

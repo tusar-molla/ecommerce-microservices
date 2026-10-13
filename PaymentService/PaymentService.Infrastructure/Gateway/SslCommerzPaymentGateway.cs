@@ -2,6 +2,7 @@
 using PaymentService.Application.Interfaces;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text;
 
@@ -77,28 +78,24 @@ namespace PaymentService.Infrastructure.Gateway
 
         public async Task<ValidationResult> ValidateTransactionAsync(string validationId)
         {
-            var query = $"?val_id={validationId}&store_id={_storeId}&store_passwd={_storePassword}&format=json";
+            var query = $"?val_id={Uri.EscapeDataString(validationId)}" +
+                        $"&store_id={Uri.EscapeDataString(_storeId)}" +
+                        $"&store_passwd={Uri.EscapeDataString(_storePassword)}&format=json";
+
             var response = await _httpClient.GetAsync($"/validator/api/validationserverAPI.php{query}");
 
-            if (!response.IsSuccessStatusCode)
-            {
-                return new ValidationResult { IsValid = false };
-            }
+            // A network or server problem is not a verdict on the payment.
+            // Throwing makes the IPN request fail, so the gateway can retry it later.
+            response.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<SslCommerzValidationResponse>();
-
-            if (result is null)
-            {
-                return new ValidationResult { IsValid = false };
-            }
-
-            var isValid = result.status == "VALID";
+            var result = await response.Content.ReadFromJsonAsync<SslCommerzValidationResponse>()
+                ?? throw new InvalidOperationException("Empty response from the SSLCommerz validation API.");
 
             return new ValidationResult
             {
-                IsValid = isValid,
+                IsValid = result.status is "VALID" or "VALIDATED",
                 Status = result.status,
-                Amount = decimal.TryParse(result.amount, out var amt) ? amt : 0,
+                Amount = decimal.TryParse(result.amount, NumberStyles.Number, CultureInfo.InvariantCulture, out var amt) ? amt : 0,
                 Currency = result.currency
             };
         }
