@@ -13,5 +13,6 @@ namespace OrderService.Application.Interfaces
         Task<IEnumerable<Order>> GetByUserIdAsync(Guid userId);
         Task UpdateStatusAsync(Guid orderId, OrderStatus status);
         Task<bool> TryCancelAsync(Guid orderId, OutboxMessage outboxMessage);
+        Task<bool> TryAdvanceStatusAsync(Guid orderId, OrderStatus newStatus, params OrderStatus[] allowedFrom);
     }
 }

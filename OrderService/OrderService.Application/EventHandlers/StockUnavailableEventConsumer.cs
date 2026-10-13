@@ -17,18 +17,11 @@ namespace OrderService.Application.EventHandlers
             _orderRepository = orderRepository;
         }
 
+
         public async Task Consume(ConsumeContext<StockUnavailableEvent> context)
         {
-            var order = await _orderRepository.GetByIdAsync(context.Message.OrderId);
-            if (order is null)
-            {
-                return;
-            }
-
-            order.Status = OrderStatus.Cancelled;
-            order.UpdatedAt = DateTime.UtcNow;
-
-            await _orderRepository.UpdateStatusAsync(order.Id, order.Status);
+            await _orderRepository.TryAdvanceStatusAsync(
+                context.Message.OrderId, OrderStatus.Cancelled, OrderStatus.Pending);
         }
     }
 }

@@ -176,7 +176,23 @@ namespace OrderService.Infrastructure.Repositories
                 throw;
             }
         }
+        public async Task<bool> TryAdvanceStatusAsync(Guid orderId, OrderStatus newStatus, params OrderStatus[] allowedFrom)
+        {
+            using var connection = _connectionFactory.CreateConnection();
 
+            var changed = await connection.ExecuteAsync(@"
+        UPDATE Orders SET Status = @NewStatus, UpdatedAt = @Now
+        WHERE Id = @OrderId AND Status IN @Allowed",
+                new
+                {
+                    OrderId = orderId,
+                    NewStatus = newStatus.ToString(),
+                    Allowed = allowedFrom.Select(s => s.ToString()).ToArray(),
+                    Now = DateTime.UtcNow
+                });
+
+            return changed > 0;
+        }
     }
 }
 

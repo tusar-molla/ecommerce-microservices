@@ -19,13 +19,8 @@ namespace OrderService.Application.EventHandlers
 
         public async Task Consume(ConsumeContext<PaymentCompletedEvent> context)
         {
-            var order = await _orderRepository.GetByIdAsync(context.Message.OrderId);
-            if (order is null)
-            {
-                return;
-            }
-
-            await _orderRepository.UpdateStatusAsync(order.Id, OrderStatus.Confirmed);
+            await _orderRepository.TryAdvanceStatusAsync(
+                context.Message.OrderId, OrderStatus.Confirmed, OrderStatus.Pending, OrderStatus.StockReserved);
         }
     }
 }
