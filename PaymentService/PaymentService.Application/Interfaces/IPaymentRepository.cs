@@ -7,7 +7,7 @@ namespace PaymentService.Application.Interfaces
 {
     public interface IPaymentRepository
     {
-        Task<Guid> CreateAsync(Payment payment);
+        Task<Guid> CreateAsync(Payment payment, OutboxMessage? outboxMessage = null);
         Task<Payment?> GetByIdAsync(Guid id);
         Task<Payment?> GetByOrderIdAsync(Guid orderId);
         Task<Payment?> GetByTransactionIdAsync(string transactionId);

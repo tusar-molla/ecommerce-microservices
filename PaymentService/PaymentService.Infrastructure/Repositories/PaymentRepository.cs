@@ -175,5 +175,54 @@ namespace PaymentService.Infrastructure.Repositories
                 throw;
             }
         }
+
+        public async Task<Guid> CreateAsync(Payment payment, OutboxMessage? outboxMessage = null)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+            connection.Open();
+            using var transaction = connection.BeginTransaction();
+
+            try
+            {
+                const string sql = @"
+            INSERT INTO Payments (Id, OrderId, UserId, Amount, Currency, Status, TransactionId,
+                                  GatewaySessionKey, GatewayValidationId, FailureReason, CreatedAt, GatewayPageUrl)
+            VALUES (@Id, @OrderId, @UserId, @Amount, @Currency, @Status, @TransactionId,
+                    @GatewaySessionKey, @GatewayValidationId, @FailureReason, @CreatedAt, @GatewayPageUrl)";
+
+                await connection.ExecuteAsync(sql, new
+                {
+                    payment.Id,
+                    payment.OrderId,
+                    payment.UserId,
+                    payment.Amount,
+                    payment.Currency,
+                    Status = payment.Status.ToString(),
+                    payment.TransactionId,
+                    payment.GatewaySessionKey,
+                    payment.GatewayValidationId,
+                    payment.FailureReason,
+                    payment.CreatedAt,
+                    payment.GatewayPageUrl
+                }, transaction);
+
+                if (outboxMessage is not null)
+                {
+                    await connection.ExecuteAsync(@"
+                INSERT INTO OutboxMessages (Id, EventType, Payload, CreatedAt)
+                VALUES (@Id, @EventType, @Payload, @CreatedAt)",
+                        new { outboxMessage.Id, outboxMessage.EventType, outboxMessage.Payload, outboxMessage.CreatedAt },
+                        transaction);
+                }
+
+                transaction.Commit();
+                return payment.Id;
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
     }
 }

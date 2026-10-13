@@ -75,20 +75,23 @@ namespace PaymentService.Application.EventHandlers
                 TransactionId = transactionId,
                 Status = initiateResult.Success ? PaymentStatus.AwaitingGatewayRedirect : PaymentStatus.Failed,
                 GatewaySessionKey = initiateResult.SessionKey,
-                FailureReason = initiateResult.FailureReason,
-                GatewayPageUrl = initiateResult.GatewayPageUrl
+                GatewayPageUrl = initiateResult.GatewayPageUrl,
+                FailureReason = initiateResult.FailureReason
             };
 
-            await _paymentRepository.CreateAsync(payment);
-
+            OutboxMessage? outbox = null;
             if (!initiateResult.Success)
             {
-                await context.Publish(new PaymentFailedEvent
+                outbox = OutboxMessage.From(new PaymentFailedEvent
                 {
                     OrderId = orderId,
                     Reason = initiateResult.FailureReason ?? "Payment session could not be created"
                 });
             }
+
+            await _paymentRepository.CreateAsync(payment, outbox);
         }
+
     }
 }
+
