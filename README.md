@@ -1,6 +1,6 @@
 # E-Commerce Microservices Platform
 
-> A production-style e-commerce backend built with **.NET 10**: six independently deployable services, an **event-driven Saga with compensating transactions**, a **real payment gateway integration** (SSLCommerz), and a **one-command Docker Compose environment**.
+> A production-style e-commerce backend built with **.NET 10**: six independently deployable services, an **event-driven Saga with compensating transactions**, **reliable messaging** (transactional outbox and idempotent consumers), a **real payment gateway integration** (SSLCommerz), and a **one-command Docker Compose environment**.
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-Dapper-CC2927?logo=microsoftsqlserver&logoColor=white)
@@ -24,7 +24,9 @@ Then open the Swagger pages listed under [Getting started](#getting-started).
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [The checkout Saga](#the-checkout-saga)
+- [Reliability: outbox and idempotency](#reliability-outbox-and-idempotency)
 - [Payment security model](#payment-security-model)
+- [Security overview](#security-overview)
 - [Engineering highlights](#engineering-highlights)
 - [Service reference](#service-reference)
 - [Tech stack](#tech-stack)
@@ -46,12 +48,14 @@ A customer browses a catalog, fills a cart, checks out, pays through a real paym
 |---|---|---|
 | **Identity** | Users, roles, tokens | JWT access + refresh tokens with rotation, immediate revocation on logout, role-based authorization |
 | **Catalog** | Products, categories, images | Soft delete, pagination and filtering, multi-image support, batched lookups for other services |
-| **Order** | Cart, orders | Live-priced cart, transactional checkout with price snapshots, Saga participant, Hangfire cleanup job |
-| **Inventory** | Stock, reservations | Atomic oversell-safe reservation, compensating stock release, admin stock tools |
-| **Payment** | Payments | SSLCommerz sandbox (redirect + IPN), server-side validation, duplicate-callback protection |
+| **Order** | Cart, orders | Live-priced cart, atomic checkout with price snapshots, transactional outbox, Saga participant, Hangfire cleanup jobs |
+| **Inventory** | Stock, reservations | Atomic oversell-safe reservation, idempotent consumers, compensating stock release, admin stock tools |
+| **Payment** | Payments | SSLCommerz sandbox (redirect + IPN), server-side validation, duplicate-callback protection, transactional outbox |
 | **Notification** | Notification log | Event-driven transactional email (SMTP), send-once guard, audit trail |
 
 The full flow was verified end to end against the real SSLCommerz sandbox: the success path (paid, order confirmed, email sent) and the failure path (payment cancelled, order cancelled, stock released).
+
+The stock guarantee was checked with a concurrent-checkout test: 10 customers checking out at the same instant for 3 units of stock gave exactly 3 reserved orders and 7 cancelled, with stock never going negative (repeated 5 times).
 
 ---
 
@@ -130,7 +134,7 @@ flowchart LR
     API -.->|"DI registration only"| INF
 ```
 
-- **Application** depends on nothing. It defines interfaces such as `IPaymentGateway`, `IEmailSender`, `IStockRepository`, and `IFileStorageService`.
+- **Application** doesn't depend on Infrastructure or Api. It defines the interfaces (`IPaymentGateway`, `IEmailSender`, `IStockRepository`, `IFileStorageService`) that Infrastructure implements.
 - **Infrastructure** implements those interfaces. Swapping SSLCommerz for Stripe, Mailtrap for SendGrid, or local disk for S3 means writing one new class and changing one line of DI, with no changes to business logic.
 - **Api** is thin. Controllers only dispatch to MediatR (CQRS).
 - There is deliberately no separate Domain project (see [trade-offs](#design-decisions-and-trade-offs)).
@@ -178,9 +182,9 @@ sequenceDiagram
     participant N as Notification
 
     C->>O: POST /api/orders/checkout
-    Note over O: Order saved as Pending in one transaction, cart cleared
+    Note over O: Order, items and the OrderPlaced event saved in one transaction, cart cleared
     O-->>C: 200 with orderId
-    O->>MQ: OrderPlaced
+    O->>MQ: OrderPlaced (via outbox)
     MQ->>I: OrderPlaced
     Note over I: Atomic conditional UPDATE reserves stock
     I->>MQ: StockReserved
@@ -193,7 +197,7 @@ sequenceDiagram
     G->>P: IPN callback to /api/payments/ipn
     P->>G: Validation API with val_id
     G-->>P: VALID and amount
-    P->>MQ: PaymentCompleted
+    P->>MQ: PaymentCompleted (via outbox)
     MQ->>O: PaymentCompleted
     Note over O: Status becomes Confirmed
     MQ->>N: PaymentCompleted
@@ -212,10 +216,10 @@ sequenceDiagram
     participant N as Notification
 
     Note over P: IPN fails validation, the amount does not match, or the gateway session cannot be created
-    P->>MQ: PaymentFailed
+    P->>MQ: PaymentFailed (via outbox)
     MQ->>O: PaymentFailed
-    Note over O: Status becomes Cancelled
-    O->>MQ: StockReleaseRequested
+    Note over O: Status becomes Cancelled, release event saved in the same transaction
+    O->>MQ: StockReleaseRequested (via outbox)
     MQ->>I: StockReleaseRequested
     Note over I: Reservation released, stock available again
     MQ->>N: PaymentFailed
@@ -227,9 +231,10 @@ sequenceDiagram
 | Not enough stock at reservation time | Inventory (conditional UPDATE affects 0 rows) | `StockUnavailable` → order cancelled, customer emailed. Any items already reserved for that order are rolled back inside Inventory. |
 | Payment declined, cancelled, or invalid | Payment (gateway validation) | `PaymentFailed` → order cancelled, stock released, customer emailed |
 | Gateway session cannot be created (bad credentials, outage) | Payment (initiate call fails) | `PaymentFailed`, same compensation as a declined payment |
+| Gateway validation API unreachable during an IPN | Payment (validation call throws) | The IPN request fails and nothing is recorded, so the gateway can retry. The payment is not marked failed. |
 | Amount in the callback differs from the order total | Payment (amount check) | Treated as a failed payment |
 | Duplicate IPN from the gateway | Payment (`ProcessedIpnCallbacks`) | Ignored |
-| Duplicate event delivery to Notification | Notification (send-once guard) | No second email |
+| Duplicate event delivery | The receiving consumer (see [Reliability](#reliability-outbox-and-idempotency)) | No second effect |
 
 ### Order lifecycle
 
@@ -244,20 +249,57 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-`Shipped` and `Delivered` exist in the status enum for a future fulfillment flow but are not driven by any event yet.
+Transitions are forward-only. Each status change is a conditional `UPDATE ... WHERE Status IN (...)`, so a late or duplicate event cannot move an order backward (for example, from `Confirmed` back to `StockReserved`). `Shipped` and `Delivered` exist in the status enum for a future fulfillment flow but are not driven by any event yet.
 
 ### Events
 
 | Event | Published by | Consumed by |
 |---|---|---|
-| `OrderPlaced` | Order | Inventory |
+| `OrderPlaced` | Order (outbox) | Inventory |
 | `StockReserved` | Inventory | Order, Payment |
 | `StockUnavailable` | Inventory | Order, Notification |
-| `PaymentCompleted` | Payment | Order, Notification |
-| `PaymentFailed` | Payment | Order, Notification |
-| `StockReleaseRequested` | Order | Inventory |
+| `PaymentCompleted` | Payment (outbox) | Order, Notification |
+| `PaymentFailed` | Payment (outbox) | Order, Notification |
+| `StockReleaseRequested` | Order (outbox) | Inventory |
 
 Each consumer has its own queue (for example `inventory-order-placed-queue`, `notification-payment-failed-queue`), so one event can fan out to several services independently.
+
+---
+
+## Reliability: outbox and idempotency
+
+Two problems come with sending events between services:
+
+1. **The dual-write problem.** Saving to the database and publishing to RabbitMQ are two separate steps. A crash between them would save an order and lose its event, leaving the order stuck.
+2. **Duplicates.** RabbitMQ and the outbox guarantee *at least once* delivery, so the same event can arrive twice (a redelivery after a crash, or a republish). Handling it twice must not repeat the effect.
+
+```mermaid
+flowchart TD
+    A["Checkout request"] --> B["One database transaction:<br/>save order, items and an OutboxMessages row"]
+    B --> C["Outbox publisher<br/>(background worker, polls every second)"]
+    C -->|"publish, then mark as sent"| D{{"RabbitMQ"}}
+    D --> E{"Consumer: is this message id<br/>already recorded?"}
+    E -- Yes --> F["Duplicate: change nothing"]
+    E -- No --> G["Do the work and record the<br/>message id in one transaction"]
+```
+
+**Transactional outbox.** The event is written to an `OutboxMessages` table in the same transaction as the business change, so the two succeed or fail together. A background worker publishes unsent rows and marks them sent. If RabbitMQ is down, checkout still succeeds and the events wait in the table until the broker is back. The outbox row's id becomes the message id, so a republished event carries the same id as the original. A daily Hangfire job deletes processed rows older than 7 days (`Outbox:RetentionDays`), keeping unsent rows and rows parked as dead.
+
+**Idempotent consumers.** Each consumer makes a repeated message harmless:
+
+| Where | Mechanism | Protects against |
+|---|---|---|
+| Order, checkout | Cart cleared and order written in one transaction; the delete must match the cart's item count | A double-click or concurrent submit creating two orders |
+| Order, checkout | `OrderPlaced` saved through the outbox | Losing the event after the order is saved |
+| Order, status consumers | Forward-only conditional `UPDATE` | A late or duplicate event moving an order backward |
+| Order, `PaymentFailed` | Cancels only if still `Pending` or `StockReserved`; the release event goes through the outbox in the same transaction | A duplicate publishing a second stock release |
+| Inventory, `OrderPlaced` | Message id claimed in `ProcessedMessages` in the same transaction as the reservation; a savepoint undoes the stock changes when an item is short; a duplicate repeats the saved result | Reserving stock twice, or half-reserving after a crash |
+| Inventory, `StockReleaseRequested` | Releases only reservations still marked `Reserved` | A duplicate adding stock back twice |
+| Payment, IPN | Processed marker, payment update and result event written in one transaction | Losing a payment confirmation after the customer has paid |
+| Payment, `StockReserved` | The failed payment and its `PaymentFailed` event saved together | A gateway failure never reaching the order |
+| Notification | Skips the email if one was already recorded as sent for that order and type | Sending the same email twice |
+
+These were checked by injecting the failure each one protects against: replaying the same message twice through the RabbitMQ management API, stopping RabbitMQ during checkout, replaying an IPN, and firing concurrent requests.
 
 ---
 
@@ -283,6 +325,26 @@ flowchart TD
 - The `/success`, `/fail`, and `/cancel` URLs are ordinary public endpoints. Anyone can visit them, so they only display a message.
 - The IPN body is not trusted either. Payment Service takes the `val_id` from it and asks SSLCommerz directly whether the transaction is real and what amount was paid. Only that answer counts.
 - A customer can forge a request to our server. They cannot forge SSLCommerz's answer to a server-to-server call.
+- If the validation API is unreachable, the IPN fails instead of marking a possibly paid order as failed, so the gateway retries.
+
+---
+
+## Security overview
+
+| Area | What is in place |
+|---|---|
+| **Authentication** | JWT bearer tokens; BCrypt password hashing; single-use refresh tokens with rotation |
+| **Revocation** | Logout revokes the refresh token and blocklists the access token's `jti`, checked by middleware between authentication and authorization, so a token stops working immediately |
+| **Authorization** | Role checks (`Customer`, `Admin`) on every write endpoint; no self-service path to elevated roles |
+| **Object-level access (IDOR)** | Orders and payments are returned only to their owner (404 otherwise). The user id always comes from the token, never from the request body. |
+| **Payments** | Browser redirects are display-only; the IPN is verified server-to-server including the amount; duplicate IPNs are ignored |
+| **Service-to-service calls** | `/internal/...` endpoints require an `X-Internal-Api-Key` header, separate from customer JWTs |
+| **Secrets** | Nothing secret is committed. Config lives in a git-ignored `.env` (Docker) or `appsettings.Development.json` (IDE). Both are excluded from images through `.dockerignore`. Compose refuses to start without the SQL password, JWT key and internal key. |
+| **Network exposure** | SQL Server and RabbitMQ are published on `127.0.0.1` only. Services reach each other over the Compose network. |
+| **Input handling** | Parameterized Dapper queries throughout; FluentValidation on commands; image uploads checked for type and size; outbox payloads are deserialized only into known contract types |
+| **Data integrity** | Prices are snapshotted at checkout; products are soft-deleted; multi-step writes run in transactions |
+
+Known security limitations are listed under [Known limitations](#known-limitations-and-roadmap).
 
 ---
 
@@ -290,19 +352,19 @@ flowchart TD
 
 | Topic | What was done |
 |---|---|
-| **Overselling prevention** | Stock reservation is a single conditional `UPDATE ... WHERE QuantityAvailable >= @qty` (`TryReserveStockAsync`), so the check and the decrement can't be separated by a concurrent request. A multi-item order that partially succeeds rolls back its earlier reservations. |
-| **Compensating transactions** | Payment failure triggers order cancellation and a `StockReleaseRequested` event that Inventory handles with the same release logic used for partial rollback. |
+| **Overselling prevention** | Stock reservation is a single conditional `UPDATE ... WHERE QuantityAvailable >= @qty`, so the check and the decrement can't be separated by a concurrent request. A multi-item order that comes up short is rolled back as a unit. Verified with a 10-way concurrent checkout test. |
+| **Reliable messaging** | Transactional outbox for the events that must not be lost, and idempotent consumers so duplicates are harmless. See [Reliability](#reliability-outbox-and-idempotency). |
+| **Compensating transactions** | Payment failure triggers order cancellation and a `StockReleaseRequested` event that Inventory handles idempotently. |
 | **Gateway trust boundary** | Browser redirects are display-only. The IPN is cross-checked against SSLCommerz's Validation API, including amount, and deduplicated by transaction id. |
-| **Immediate token revocation** | JWTs are stateless, so logout alone can't invalidate an access token. Logout stores the token's `jti` in a blocklist checked by middleware that runs between authentication and authorization, and rotates and revokes refresh tokens. The blocklist sits behind `ITokenBlocklistService` so a Redis implementation can replace SQL. |
-| **IDOR protection** | `GetOrderById` and the payment queries compare the resource's `UserId` to the caller's JWT and return 404 on mismatch. The user id always comes from the token, never from the request body. |
+| **Immediate token revocation** | JWTs are stateless, so logout alone can't invalidate an access token. A `jti` blocklist behind `ITokenBlocklistService` (SQL today, Redis later) closes the gap. |
+| **IDOR protection** | `GetOrderById` and the payment queries compare the resource's `UserId` to the caller's JWT and return 404 on mismatch. |
 | **Live vs snapshot data** | Cart lines store only `ProductId` and quantity and are priced live from Catalog. At checkout, name and price are copied into `OrderItems` so later catalog changes can't rewrite history. |
 | **Fail-fast validation** | `AddToCart` checks live stock, including the quantity already in the cart, and rejects with a clear message before anything is written. The authoritative check still happens atomically in Inventory. |
 | **Avoiding N+1** | Images for a page of products are loaded in one `IN (...)` query. Order Service uses Catalog's bulk endpoint instead of one call per cart line. |
-| **Service-to-service auth** | Internal endpoints (`/internal/...`) are protected by an `X-Internal-Api-Key` filter, separate from customer JWTs. |
-| **Transactions** | Order plus items are written in one DB transaction. The cart is cleared only after the order is safely stored, and events are published after the commit. |
+| **Transactions** | Order, items, cart clearing and the `OrderPlaced` event are written in one transaction. |
 | **Replaceable infrastructure** | Gateway, email, file storage, token blocklist, and messaging all sit behind interfaces defined in the Application layer. |
 | **One-command environment** | Multi-stage Dockerfiles per service, a Compose file with health checks and start-up ordering, and an idempotent `db-init` job. All settings come from environment variables, with no secrets in git or in images. |
-| **Background jobs** | Hangfire runs a daily job that deletes carts untouched for 30 days. |
+| **Background jobs** | Hangfire deletes carts untouched for 30 days and processed outbox rows older than 7 days. |
 
 ---
 
@@ -360,11 +422,11 @@ Tables: `Categories`, `Products`, `Files`.
 | GET | `/api/orders/{orderId}` | Customer | Own order only |
 | GET | `/api/orders/my-orders` | Customer | Order history |
 | GET | `/api/orders/internal/{orderId}` | Internal API key | Order lookup for other services |
-| | `/hangfire` | Dev only | Job dashboard |
+| | `/hangfire` | Development only | Job dashboard |
 
-Consumes: `StockReserved`, `StockUnavailable`, `PaymentCompleted`, `PaymentFailed`. Publishes: `OrderPlaced`, `StockReleaseRequested`.
+Consumes: `StockReserved`, `StockUnavailable`, `PaymentCompleted`, `PaymentFailed`. Publishes through the outbox: `OrderPlaced`, `StockReleaseRequested`.
 
-Tables: `Carts`, `CartItems`, `Orders`, `OrderItems` (plus `HangfireDb` for job storage).
+Tables: `Carts`, `CartItems`, `Orders`, `OrderItems`, `OutboxMessages` (plus `HangfireDb` for job storage).
 </details>
 
 <details>
@@ -377,11 +439,11 @@ Tables: `Carts`, `CartItems`, `Orders`, `OrderItems` (plus `HangfireDb` for job 
 | GET | `/api/stock/missing` | Admin | Products that exist in Catalog but have no stock record |
 | GET | `/api/stock-levels?productIds=` | Public | Available quantities |
 
-Consumes: `OrderPlaced`, `StockReleaseRequested`. Publishes: `StockReserved`, `StockUnavailable`.
+Consumes: `OrderPlaced`, `StockReleaseRequested` (both idempotent). Publishes: `StockReserved`, `StockUnavailable`.
 
 Cataloging a product and stocking it are deliberately separate business actions, so there is no hidden coupling between the two services. `GET /api/stock/missing` is the reconciliation tool for products someone forgot to stock.
 
-Tables: `Stock`, `StockReservations`.
+Tables: `Stock`, `StockReservations`, `ProcessedMessages`.
 </details>
 
 <details>
@@ -395,9 +457,9 @@ Tables: `Stock`, `StockReservations`.
 | POST | `/api/payments/success`, `/fail`, `/cancel` | Gateway redirect | Display only, change nothing |
 | POST | `/api/payments/ipn` | Gateway callback | Validated, authoritative payment result |
 
-Consumes: `StockReserved`. Publishes: `PaymentCompleted`, `PaymentFailed`.
+Consumes: `StockReserved`. Publishes through the outbox: `PaymentCompleted`, `PaymentFailed`.
 
-Tables: `Payments`, `ProcessedIpnCallbacks`.
+Tables: `Payments`, `ProcessedIpnCallbacks`, `OutboxMessages`.
 </details>
 
 <details>
@@ -411,7 +473,7 @@ No public API. It only reacts to events.
 | `PaymentFailed` | Order cancelled, payment failed |
 | `StockUnavailable` | Order cancelled, item unavailable |
 
-A shared dispatcher resolves order, then user, then email address through the other services, skips the send if one was already recorded as sent for that order and type, and writes every attempt (`Sent` or `Failed` with the error) to `NotificationLogs`. A failed send is logged and not retried forever.
+A shared dispatcher resolves order, then user, then email address through the other services, skips the send if one was already recorded as sent for that order and type, and writes every attempt (`Sent` or `Failed` with the error) to `NotificationLogs`. A failed send is logged and not retried.
 
 Tables: `NotificationLogs`.
 </details>
@@ -424,8 +486,8 @@ Tables: `NotificationLogs`.
 |---|---|
 | Runtime | .NET 10, ASP.NET Core Web API |
 | Data access | Dapper (raw SQL), SQL Server, one database per service |
-| Patterns | CQRS with MediatR, repository per aggregate, FluentValidation |
-| Messaging | RabbitMQ through MassTransit |
+| Patterns | CQRS with MediatR, repository per aggregate, FluentValidation, transactional outbox, idempotent consumers |
+| Messaging | RabbitMQ through MassTransit 8 |
 | Auth | JWT bearer, BCrypt password hashing, refresh token rotation |
 | Payments | SSLCommerz sandbox (hosted checkout and IPN) |
 | Email | MailKit over SMTP, Mailtrap sandbox inbox |
@@ -476,7 +538,9 @@ The first run takes a few minutes (it downloads the SQL Server, .NET, and Rabbit
 | Payment | http://localhost:8085/swagger |
 | Notification | http://localhost:8086/swagger (no endpoints, it only consumes events) |
 | RabbitMQ UI | http://localhost:15672 (user and password from `.env`, default guest / guest) |
-| SQL Server | `localhost,14333`, login `sa`, password `SA_PASSWORD` from `.env` |
+| SQL Server | `127.0.0.1,14333`, login `sa`, password `SA_PASSWORD` from `.env` |
+
+Connect to SQL Server with `127.0.0.1`, not `localhost`. The port is published on IPv4 loopback only, and `localhost` can resolve to IPv6, which is refused.
 
 A token issued by Identity works on every service, because they all share the same `JWT_SECRET_KEY`. Use **Authorize** in each Swagger page.
 
@@ -524,7 +588,7 @@ Compose reads `.env` when it **creates** a container. After editing it, run `doc
 
 ## Try it: end-to-end walkthrough
 
-1. **Create an Admin.** Register through `POST /api/auth/register` on Identity, then promote the account with any SQL client connected to `localhost,14333`, and log in again so the token carries the role:
+1. **Create an Admin.** Register through `POST /api/auth/register` on Identity, then promote the account with any SQL client connected to `127.0.0.1,14333`, and log in again so the token carries the role:
    ```sql
    UPDATE IdentityServiceDb.dbo.Users SET Role = 'Admin' WHERE Email = 'you@example.com';
    ```
@@ -535,6 +599,7 @@ Compose reads `.env` when it **creates** a container. After editing it, run `doc
 6. **Pay.** On Payment, `GET /api/payments/{orderId}/redirect-url`, open the returned URL in a browser, and complete a sandbox payment (test credentials are on the SSLCommerz sandbox dashboard). This needs the ngrok step above.
 7. **Watch it resolve.** The order becomes `Confirmed`, and the email appears in your Mailtrap inbox. The ngrok inspector at http://127.0.0.1:4040 shows the IPN arriving.
 8. **Break it on purpose.** Cancel the payment on the gateway page instead. The order becomes `Cancelled`, `Stock.QuantityAvailable` returns to its earlier value, and a cancellation email is sent.
+9. **Try the reliability features.** Run `docker compose stop rabbitmq`, check out, and note that checkout still succeeds. Then `docker compose start rabbitmq`: the order moves on by itself once the outbox publisher reconnects.
 
 ---
 
@@ -547,24 +612,30 @@ Compose reads `.env` when it **creates** a container. After editing it, run `doc
 | Follow one service's logs | `docker compose logs -f order-service` |
 | Rebuild one service after a code change | `docker compose up -d --build order-service` |
 | Apply `.env` changes | `docker compose up -d` |
-| Stop, keeping data | `docker compose down` |
+| Stop, keeping data (wait for it to finish) | `docker compose down` |
 | Stop and wipe all data | `docker compose down -v` |
 
 | Symptom | Likely cause |
 |---|---|
-| Order stuck at `Pending` | Inventory isn't consuming `OrderPlaced`. Check `docker compose logs inventory-service` and the RabbitMQ queues. |
+| Order stuck at `Pending` | Inventory isn't consuming `OrderPlaced`, or the outbox row is still unsent. Check `docker compose logs inventory-service`, the RabbitMQ queues, and `OutboxMessages` in `OrderServiceDb`. |
 | A service returns `401` | Token not authorized in that service's Swagger page, or it expired |
 | Payment row is `Failed` with "Store Credential Error" | `SSLCOMMERZ_*` values in `.env` are missing or still the placeholders. Fix them, then `docker compose up -d payment-service`. |
 | Payment stays `AwaitingGatewayRedirect` after paying | The gateway couldn't reach the IPN URL. Check ngrok is running and `PAYMENT_PUBLIC_BASE_URL` matches it. Use a **new** order afterwards, because an order's callback URLs are fixed when its payment session is created. |
+| Notification rows `Failed` with "Too many emails per second" | Mailtrap's free sandbox rate limit, hit when many emails are sent at once. Emails are not retried yet (see known limitations). |
+| `db-init` fails with `Msg 904 ... cannot be autostarted` | SQL Server was killed before shutting down cleanly and was still recovering. Run `docker compose up -d` again. |
+| Can't connect to SQL Server from SSMS ("connection refused") | Use `127.0.0.1,14333` instead of `localhost,14333` |
 | Containers keep restarting | Not enough memory. Raise it in Docker Desktop under Settings, then Resources. |
 | `port is already allocated` | Another process uses 5672, 15672, 14333, or 8081-8086. Stop it, or change the left-hand port in `docker-compose.yml`. |
 | Can't log in to SQL Server after changing `SA_PASSWORD` | The password was set when the volume was first created. Run `docker compose down -v` to start fresh. |
+| Hangfire dashboard returns 401 | The dashboard is open in Development only. Outside Development it accepts local requests only. |
 
 ---
 
 ## Design decisions and trade-offs
 
 - **Choreography over orchestration.** With three or four participants, independent consumers reacting to events are simple and loosely coupled. The cost is that the whole flow isn't visible in one place. If more steps are added, a MassTransit state-machine saga would centralize it.
+- **At-least-once delivery plus idempotent consumers.** Exactly-once delivery isn't achievable across a database and a broker. The system accepts duplicates and makes each consumer harmless to repeat, instead of trying to prevent them.
+- **A hand-written outbox on Dapper.** The outbox is a table, a repository and a small background worker. As far as I know, MassTransit's built-in outbox targets EF Core, so writing it directly kept the Dapper stack and made the pattern explicit.
 - **Dapper instead of EF Core.** SQL stays explicit and fast, and the business logic doesn't need a rich domain model. That also drove the choice of three projects per service instead of four (no separate Domain project).
 - **CQRS without separate read stores.** Commands and queries are separated in code with MediatR, and each service keeps one database. Splitting read and write stores adds eventual consistency and a projection to maintain, and isn't worth it without a measured scaling problem. Catalog is the natural place to try it first.
 - **Catalog and Inventory are separate on purpose.** Catalog is read-heavy and changes rarely. Inventory is write-heavy and needs strong consistency. Cataloging a product and stocking it are two business events, so creating a product does not silently create stock.
@@ -577,23 +648,43 @@ Compose reads `.env` when it **creates** a container. After editing it, run `doc
 
 ## Known limitations and roadmap
 
-Documented honestly so a reader knows what is and isn't covered.
+Documented honestly so a reader knows what is and isn't covered. The project targets local use and demonstration, not production.
 
-**Known gaps**
+**Reliability gaps**
 
-- **Dual-write problem.** An order is saved and then its event is published as two separate steps. A crash between them would leave an order stuck in `Pending`. The fix is the Outbox Pattern.
-- **Idempotency is partial.** Payment (IPN) and Notification are protected against duplicates. The Inventory and Order consumers don't yet deduplicate redelivered messages.
-- **No automated tests yet.** The flows were verified manually and through the real sandbox. Unit and integration tests are planned, plus a concurrent-checkout test to demonstrate the overselling guarantee under load.
-- **The Docker setup is for local use.** Containers run with `ASPNETCORE_ENVIRONMENT=Development` (Swagger on, Hangfire dashboard unauthenticated), traffic between services is plain HTTP, and SQL Server and RabbitMQ are published on the host. On a shared network, bind those ports to `127.0.0.1` in `docker-compose.yml`. A real deployment would also use a secrets manager.
-- **Cart is cleared at checkout,** before stock and payment are confirmed. A cancelled order doesn't restore it.
+- Inventory publishes `StockReserved` and `StockUnavailable` directly, without an outbox. A redelivered `OrderPlaced` repeats the saved result, which covers a crash after the commit, but there is no outbox row to retry from.
+- `Payments.OrderId` has no unique index. Two copies of the same `StockReserved` processed at the same instant could both create a gateway session.
+- Consumers have no explicit retry policy. A consumer that throws may leave its message in an error queue that nothing monitors.
+- The outbox publisher assumes one running instance of its service. Two copies would publish the same rows twice.
+- Payment's outbox table has no cleanup job (only Order's does).
+- **Failed emails are not retried.** Notification makes one send attempt and records `Failed` with the error. During a burst (for example 7 simultaneous cancellations) Mailtrap's sandbox rejected 6 of 7 emails with "Too many emails per second", and those customers were never notified.
+- A `PaymentCompleted` for an order that was already cancelled is ignored. There is no refund flow.
+- The cart is cleared at checkout, before stock and payment are confirmed. A cancelled order doesn't restore it.
+
+**Security and deployment gaps**
+
+- Containers run with `ASPNETCORE_ENVIRONMENT=Development` (Swagger on, Hangfire dashboard unauthenticated), and traffic between services is plain HTTP.
+- Every service connects to SQL Server as `sa`. A real deployment would give each service its own login limited to its own database.
+- All services share one symmetric JWT signing key. A real deployment would use asymmetric keys or a dedicated identity provider.
+- Secrets come from a git-ignored `.env`. A real deployment would use a secrets manager.
+- No rate limiting on login, registration or checkout.
+- MediatR 14 logs a licence warning outside development and testing. A production deployment would need a licence or an earlier version.
+
+**Testing**
+
+- There are no automated tests yet. The flows were verified manually and against the real sandbox: duplicate messages replayed through RabbitMQ, the broker stopped during checkout, replayed IPNs, and concurrent checkouts.
 
 **Roadmap**
 
 - [x] Docker Compose for one-command startup
-- [ ] Outbox Pattern for reliable event publishing
-- [ ] Idempotent consumers in Inventory and Order
-- [ ] Unit and integration tests, concurrency test for stock reservation
+- [x] Transactional outbox for checkout and payment confirmation
+- [x] Idempotent consumers in Inventory, Order and Payment
+- [x] Concurrency test for stock reservation (run manually)
+- [ ] Automated unit and integration tests, with the concurrency test scripted
 - [ ] CI pipeline (build and test on every push)
+- [ ] Retry for failed notification emails, with backoff
+- [ ] Outbox for Inventory, unique index on `Payments.OrderId`, explicit consumer retry policy
+- [ ] Refund flow for payments that arrive after cancellation
 - [ ] API Gateway (YARP) as a single entry point
 - [ ] Redis for caching and the token blocklist, plus rate limiting
 - [ ] Distributed tracing (OpenTelemetry)
