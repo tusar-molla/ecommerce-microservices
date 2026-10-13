@@ -142,6 +142,41 @@ namespace OrderService.Infrastructure.Repositories
                 UpdatedAt = DateTime.UtcNow
             });
         }
+        public async Task<bool> TryCancelAsync(Guid orderId, OutboxMessage outboxMessage)
+        {
+            using var connection = _connectionFactory.CreateConnection();
+            connection.Open();
+            using var transaction = connection.BeginTransaction();
+
+            try
+            {
+                var changed = await connection.ExecuteAsync(@"
+            UPDATE Orders SET Status = 'Cancelled', UpdatedAt = @Now
+            WHERE Id = @OrderId AND Status IN ('Pending', 'StockReserved')",
+                    new { OrderId = orderId, Now = DateTime.UtcNow }, transaction);
+
+                if (changed == 0)
+                {
+                    transaction.Rollback();
+                    return false;
+                }
+
+                await connection.ExecuteAsync(@"
+            INSERT INTO OutboxMessages (Id, EventType, Payload, CreatedAt)
+            VALUES (@Id, @EventType, @Payload, @CreatedAt)",
+                    new { outboxMessage.Id, outboxMessage.EventType, outboxMessage.Payload, outboxMessage.CreatedAt },
+                    transaction);
+
+                transaction.Commit();
+                return true;
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
+
     }
 }
 

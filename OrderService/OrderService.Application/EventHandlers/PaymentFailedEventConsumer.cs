@@ -2,42 +2,40 @@
 using MassTransit;
 using OrderService.Application.Interfaces;
 using OrderService.Application.Models;
-using System;
-using System.Collections.Generic;
-using System.Text;
 
-namespace OrderService.Application.EventHandlers
+namespace OrderService.Application.EventHandlers;
+
+public class PaymentFailedEventConsumer : IConsumer<PaymentFailedEvent>
 {
-    public class PaymentFailedEventConsumer : IConsumer<PaymentFailedEvent>
+    private readonly IOrderRepository _orderRepository;
+
+    public PaymentFailedEventConsumer(IOrderRepository orderRepository)
     {
-        private readonly IOrderRepository _orderRepository;
+        _orderRepository = orderRepository;
+    }
 
-        public PaymentFailedEventConsumer(IOrderRepository orderRepository)
+    public async Task Consume(ConsumeContext<PaymentFailedEvent> context)
+    {
+        var orderId = context.Message.OrderId;
+
+        var order = await _orderRepository.GetByIdAsync(orderId);
+        if (order is null)
         {
-            _orderRepository = orderRepository;
+            return;
         }
 
-        public async Task Consume(ConsumeContext<PaymentFailedEvent> context)
+        var items = await _orderRepository.GetItemsAsync(orderId);
+
+        var release = new StockReleaseRequestedEvent
         {
-            var order = await _orderRepository.GetByIdAsync(context.Message.OrderId);
-            if (order is null)
+            OrderId = orderId,
+            Items = items.Select(i => new StockReleaseItem
             {
-                return;
-            }
+                ProductId = i.ProductId,
+                Quantity = i.Quantity
+            }).ToList()
+        };
 
-            await _orderRepository.UpdateStatusAsync(order.Id, OrderStatus.Cancelled);
-
-            var items = await _orderRepository.GetItemsAsync(order.Id);
-
-            await context.Publish(new StockReleaseRequestedEvent
-            {
-                OrderId = order.Id,
-                Items = items.Select(i => new StockReleaseItem
-                {
-                    ProductId = i.ProductId,
-                    Quantity = i.Quantity
-                }).ToList()
-            });
-        }
+        await _orderRepository.TryCancelAsync(orderId, OutboxMessage.From(release));
     }
 }

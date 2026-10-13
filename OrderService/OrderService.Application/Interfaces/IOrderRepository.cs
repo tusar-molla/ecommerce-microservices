@@ -12,5 +12,6 @@ namespace OrderService.Application.Interfaces
         Task<IEnumerable<OrderItem>> GetItemsAsync(Guid orderId);
         Task<IEnumerable<Order>> GetByUserIdAsync(Guid userId);
         Task UpdateStatusAsync(Guid orderId, OrderStatus status);
+        Task<bool> TryCancelAsync(Guid orderId, OutboxMessage outboxMessage);
     }
 }
