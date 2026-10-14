@@ -2,6 +2,7 @@
 
 > A production-style e-commerce backend built with **.NET 10**: six independently deployable services, an **event-driven Saga with compensating transactions**, **reliable messaging** (transactional outbox and idempotent consumers), a **real payment gateway integration** (SSLCommerz), and a **one-command Docker Compose environment**.
 
+![CI](https://github.com/tusar-molla/ecommerce-microservices/actions/workflows/ci.yml/badge.svg)
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-Dapper-CC2927?logo=microsoftsqlserver&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-MassTransit-FF6600?logo=rabbitmq&logoColor=white)
