@@ -12,6 +12,7 @@ namespace NotificationService.Application.Services
         private readonly IIdentityServiceClient _identityServiceClient;
         private readonly INotificationLogRepository _logRepository;
         private readonly IEmailSender _emailSender;
+        private static readonly int[] RetryDelaysSeconds = { 2, 5, 10, 20 };
 
         public NotificationDispatcher(
             IOrderServiceClient orderServiceClient,
@@ -56,15 +57,32 @@ namespace NotificationService.Application.Services
 
             await _logRepository.CreateAsync(log);
 
-            try
+            var body = buildBody(user, order);
+            string? lastError = null;
+
+            for (var attempt = 0; attempt <= RetryDelaysSeconds.Length; attempt++)
             {
-                await _emailSender.SendAsync(user.Email, subject, buildBody(user, order));
-                await _logRepository.UpdateStatusAsync(log.Id, NotificationStatus.Sent, null);
+                try
+                {
+                    await _emailSender.SendAsync(user.Email, subject, body);
+                    await _logRepository.UpdateStatusAsync(log.Id, NotificationStatus.Sent, null);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+
+                    if (attempt < RetryDelaysSeconds.Length)
+                    {
+                        // Backoff plus random jitter, so emails that failed together don't all retry at the same instant
+                        var delay = TimeSpan.FromSeconds(RetryDelaysSeconds[attempt])
+                                  + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 1500));
+                        await Task.Delay(delay);
+                    }
+                }
             }
-            catch (Exception ex)
-            {
-                await _logRepository.UpdateStatusAsync(log.Id, NotificationStatus.Failed, ex.Message);
-            }
+
+            await _logRepository.UpdateStatusAsync(log.Id, NotificationStatus.Failed, lastError);
         }
     }
 }
