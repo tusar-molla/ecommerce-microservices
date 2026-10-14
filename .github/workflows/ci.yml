@@ -1,12 +1,12 @@
 name: CI
 
-   on:
-     push:
-       branches: [ main ]
-       paths-ignore:
-         - '**.md'
-         - 'docs/**'
-     pull_request:
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
 
 permissions:
   contents: read
@@ -65,4 +65,5 @@ jobs:
       # Builds the image only. Nothing is started or published.
       - name: Build image
         run: docker build -f ${{ matrix.service }}/Dockerfile -t ecommerce-ci:${{ matrix.service }} .
+
 
