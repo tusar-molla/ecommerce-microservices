@@ -61,4 +61,5 @@ jobs:
 
       # Builds the image only. Nothing is started or published.
       - name: Build image
-        run: docker build -f ${{ matrix.service }}/Dockerfile -t ${{ matrix.service }}:ci .
+        run: docker build -f ${{ matrix.service }}/Dockerfile -t ecommerce-ci:${{ matrix.service }} .
+
