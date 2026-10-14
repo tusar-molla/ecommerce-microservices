@@ -201,6 +201,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ApiGateway/Dockerfile
+    image: api-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      - identity-service
+      - catalog-service
+      - order-service
+      - inventory-service
+      - payment-service
+    restart: unless-stopped
+
 volumes:
   sqlserver-data:
   rabbitmq-data:
