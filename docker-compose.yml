@@ -67,6 +67,16 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
   # ---------------------------------------------------------------- services
   identity-service:
     build:
@@ -99,6 +109,7 @@ services:
       ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=CatalogServiceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
       # Public address used to build image URLs that a browser on your machine can open
       App__BaseUrl: http://localhost:8082
+      Redis__ConnectionString: redis:6379
     volumes:
       - catalog-images:/app/wwwroot/images
     depends_on:

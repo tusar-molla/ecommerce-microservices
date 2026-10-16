@@ -10,21 +10,21 @@ namespace CatalogService.Application.Queries.GetAllCategories
     {
 
         private readonly ICategoryRepository _categoryRepository;
-
-        public GetAllCategoriesQueryHandler(ICategoryRepository categoryRepository)
+        private readonly ICacheService _cache;
+        public GetAllCategoriesQueryHandler(ICategoryRepository categoryRepository, ICacheService cache)
         {
             _categoryRepository = categoryRepository;
+            _cache = cache;
         }
         public async Task<IEnumerable<CategoryDto>> Handle(GetAllCategoriesQuery request, CancellationToken cancellationToken)
         {
-            var categories = await _categoryRepository.GetAllAsync();
-
-            return categories.Select(c => new CategoryDto
+            var categories = await _cache.GetOrCreateAsync<List<CategoryDto>>(CacheAreas.Catalog, "categories", async () =>
             {
-                Id = c.Id,
-                Name = c.Name,
-                Description = c.Description
-            });
+                var all = await _categoryRepository.GetAllAsync();
+                return all.Select(c => new CategoryDto { Id = c.Id, Name = c.Name, Description = c.Description }).ToList();
+            }, CacheAreas.DefaultTtl);
+
+            return categories ?? new List<CategoryDto>();
         }
     }
 }

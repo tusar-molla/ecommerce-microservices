@@ -5,7 +5,7 @@ using System.Text;
 
 namespace CatalogService.Application.Commands.UpdateProduct
 {
-    public class UpdateProductCommand : IRequest<Unit>
+    public class UpdateProductCommand : IRequest<Unit>,ICatalogWrite
     {
         public Guid Id { get; set; }
         public string Name { get; set; } = string.Empty;

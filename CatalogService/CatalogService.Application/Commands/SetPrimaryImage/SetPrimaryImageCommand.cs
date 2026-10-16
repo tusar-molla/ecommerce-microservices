@@ -5,7 +5,7 @@ using System.Text;
 
 namespace CatalogService.Application.Commands.SetPrimaryImage
 {
-    public class SetPrimaryImageCommand : IRequest<Unit>
+    public class SetPrimaryImageCommand : IRequest<Unit>, ICatalogWrite
     {
         public Guid ProductId { get; set; }
         public Guid ImageId { get; set; }

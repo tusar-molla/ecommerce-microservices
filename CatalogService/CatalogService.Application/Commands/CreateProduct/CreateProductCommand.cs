@@ -5,7 +5,7 @@ using System.Text;
 
 namespace CatalogService.Application.Commands.CreateProduct
 {
-    public class CreateProductCommand : IRequest<Guid>
+    public class CreateProductCommand : IRequest<Guid>, ICatalogWrite
     {
         public string Name { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;

@@ -5,7 +5,7 @@ using System.Text;
 
 namespace CatalogService.Application.Commands.UploadProductImage
 {
-    public class UploadProductImageCommand : IRequest<string>
+    public class UploadProductImageCommand : IRequest<string>, ICatalogWrite
     {
         public Guid ProductId { get; set; }
         public Stream FileStream { get; set; } = Stream.Null;
