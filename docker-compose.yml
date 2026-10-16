@@ -69,8 +69,11 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -91,11 +94,13 @@ services:
       ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=IdentityServiceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True"
       Jwt__AccessTokenExpiryMinutes: "60"
       InternalApiKey: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY in .env}
+      Redis__ConnectionString: redis:6379
     depends_on:
       db-init:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     restart: unless-stopped
-
   catalog-service:
     build:
       context: .
@@ -219,15 +224,18 @@ services:
     image: api-gateway
     ports:
       - "8080:8080"
+    environment:
+      Redis__ConnectionString: redis:6379
     depends_on:
       - identity-service
       - catalog-service
       - order-service
       - inventory-service
       - payment-service
+      - redis
     restart: unless-stopped
-
 volumes:
   sqlserver-data:
   rabbitmq-data:
   catalog-images:
+  redis-data:
